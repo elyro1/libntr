@@ -36,6 +36,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/g3_draw.h>
 #include <simulator/g3_handler.h>
 #include <simulator/sim_gui.hpp>
+#include <simulator/imgui/imgui.hpp>
 
 #include <math.h>
 #include <time.h>
@@ -96,6 +97,36 @@ u8 s_SIM_useWBuffer = 0;
 static struct timespec s_SIM_lastFrameEnd;
 static u64 sRenderFrameTime;
 static u64 sFullFrameTime;
+static bool sFastForwardActive = false;
+static constexpr u64 sNormalFrameBudgetNs = 16600000;
+static constexpr u64 sFastForwardMultiplier = 5;
+
+static void UpdateFastForward(SDL_Window *gameWindow) {
+  const Uint8 *keys = SDL_GetKeyboardState(nullptr);
+  sFastForwardActive = SDL_GetKeyboardFocus() == gameWindow &&
+                       !ImGui::GetIO().WantCaptureKeyboard &&
+                       !SIM::GUI::IsGameLogicPaused() &&
+                       keys[SDL_SCANCODE_SPACE];
+
+  // Override VSync only while speeding up; keep the saved setting intact.
+  const int swapInterval = sFastForwardActive ? 0 : s_SIM_config.vsyncInterval;
+  if (SDL_GL_GetSwapInterval() != swapInterval) {
+    SDL_GL_SetSwapInterval(swapInterval);
+  }
+}
+
+static void WaitForFrameBudget(u64 frameNs, u64 budgetNs) {
+  while (frameNs < budgetNs) {
+    const u64 remainingMs = (budgetNs - frameNs) / 1000000;
+    // Sleep most of the wait, then yield until the deadline. A millisecond-only
+    // delay is too coarse to pace the 3.32 ms fast-forward frames accurately.
+    SDL_Delay(remainingMs > 1 ? remainingMs - 1 : 0);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    frameNs = ((now.tv_sec - s_SIM_lastFrameEnd.tv_sec) * 1000000000) +
+              (now.tv_nsec - s_SIM_lastFrameEnd.tv_nsec);
+  }
+}
 
 u8 bgtex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 u8 bg0tex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
@@ -1431,6 +1462,7 @@ void *SIM_Render(void *arg) {
 
     SIM::GUI::NewFrame();
     SIM::GUI::Main();
+    UpdateFastForward(window);
 
     memset(bgtex, 0,
            sizeof(u8) * 4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2);
@@ -1478,17 +1510,12 @@ void *SIM_Render(void *arg) {
 #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(SimRenderZone);
 #endif
-    // Limit framerate to 60 fps
-    if (s_SIM_config.capFrameRate) {
-
-      // 60 Fps
-      if (frameNs < 16600000) {
-        u64 frameTimeRemaining = 16600000 - frameNs;
-        u64 frameTimeRemainingMs = frameTimeRemaining / 1000000;
-        if (frameTimeRemainingMs > 1) {
-          SDL_Delay(frameTimeRemainingMs - 1);
-        }
-      }
+    // Advance the entire game at 5x while Space is held, including VBlank tasks.
+    if (sFastForwardActive || s_SIM_config.capFrameRate) {
+      const u64 frameBudgetNs = sFastForwardActive
+                                   ? sNormalFrameBudgetNs / sFastForwardMultiplier
+                                   : sNormalFrameBudgetNs;
+      WaitForFrameBudget(frameNs, frameBudgetNs);
     }
 
     SDL_GL_SwapWindow(window);
