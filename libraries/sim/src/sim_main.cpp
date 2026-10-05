@@ -72,6 +72,7 @@ extern OSThreadInfo OSi_ThreadInfo;
 static constexpr u32 s_MaxViewWidth = 448; // 192 * 21 / 9
 static u32 s_WindowViewWidth = 256;
 static u32 s_FieldViewWidth = 256;
+static BOOL s_FieldOverlayTiled = FALSE;
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
 
@@ -985,6 +986,8 @@ static void DrawEngine(BOOL isSub) {
                      singleScreen ? (float)(s_FieldViewWidth > 256 ? s_FieldViewWidth : s_WindowViewWidth) : 256.0f);
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldWidth"),
                      (float)s_FieldViewWidth);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldOverlayTiled"),
+                     s_FieldOverlayTiled);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "singleScreen"), singleScreen);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageTexture"),
                      s_SideAverageTexUnit);
@@ -1128,6 +1131,10 @@ static void Set3DViewport() {
   glViewport((s_MaxViewWidth - width) / 2 * scale,
              (s_reg_GX_POWCNT >> 15) ? SIM_NDS_SCREEN_HEIGHT * scale : 0,
              width * scale, SIM_NDS_SCREEN_HEIGHT * scale);
+}
+
+void SIM_SetFieldOverlayTiled(BOOL enabled) {
+  s_FieldOverlayTiled = enabled;
 }
 
 u32 SIM_SetFieldWidescreen(BOOL enabled) {

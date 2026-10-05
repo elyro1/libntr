@@ -23,6 +23,7 @@ uniform int inMasterBrightMode;
 out vec4 color;
 uniform float presentationWidth;
 uniform float fieldWidth;
+uniform bool fieldOverlayTiled;
 uniform bool singleScreen;
 uniform sampler2D sideAverageTexture;
 uniform bool sideAverageValid;
@@ -34,12 +35,15 @@ vec4 sampleBg(int layer) {
     if (layer == 0 && bg0as3d != 0) {
         return texture(bgTexture[layer], worldCoord);
     }
-    // Field weather/shading overlays blend BG2 over the 3D world. Extend
-    // their edge pixels into the wide viewport without stretching the center.
+    // Field weather/shading overlays blend BG2 over the 3D world. Repeat
+    // seamless textures; extend cave mask edges without repeating the opening.
     bool fieldOverlay = fieldWidth > 256.0 && bg0as3d != 0 && layer == 2
         && ((bldcnt >> 6) & 3) == 1 && (bldcnt & (1 << 2)) != 0
         && (bldcnt & (1 << 8)) != 0;
     if (fieldOverlay) {
+        if (fieldOverlayTiled) {
+            return texture(bgTexture[layer], uiCoord);
+        }
         vec2 overlayCoord = vec2(clamp(uiCoord.x, 0.5 / 256.0, 255.5 / 256.0), uiCoord.y);
         return texture(bgTexture[layer], overlayCoord);
     }
