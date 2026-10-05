@@ -21,8 +21,45 @@ smooth in vec2 fragTexCoord;
 uniform float inMasterBrightFactor;
 uniform int inMasterBrightMode;
 out vec4 color;
+uniform float presentationWidth;
+uniform float fieldWidth;
+uniform bool singleScreen;
+uniform sampler2D sideAverageTexture;
+uniform bool sideAverageValid;
+uniform bool averagePass;
+vec2 uiCoord;
+vec2 worldCoord;
+
+vec4 sampleBg(int layer) {
+    if (layer == 0 && bg0as3d != 0) {
+        return texture(bgTexture[layer], worldCoord);
+    }
+    if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
+    return texture(bgTexture[layer], uiCoord);
+}
+vec4 sampleObj(int layer) {
+    if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
+    return texture(objTexture[layer], uiCoord);
+}
+vec4 sampleWindow() {
+    if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
+    return texture(objWindowTexture, uiCoord);
+}
+vec4 sideBackground() {
+    // A single reduced screen color prevents UI shapes from leaking into the sides.
+    vec3 average = sideAverageValid
+        ? textureLod(sideAverageTexture, vec2(0.5), 8.0).rgb
+        : backdropColor.rgb;
+    float edge = 256.0 / presentationWidth * 0.5;
+    float distance = clamp((abs(fragTexCoord.x - 0.5) - edge) / (0.5 - edge), 0.0, 1.0);
+    float shade = mix(0.55, 0.20, smoothstep(0.0, 1.0, distance));
+    return vec4(average * shade, 1.0);
+}
+
 void main()
 {
+    uiCoord = vec2(0.5 + (fragTexCoord.x - 0.5) * presentationWidth / 256.0, fragTexCoord.y);
+    worldCoord = vec2(0.5 + (fragTexCoord.x - 0.5) * presentationWidth / 448.0, fragTexCoord.y);
     int oamsDrawn = 0;
     int currentBgDrawn = 5; // Backdrop
     bool objWindowEnabled = ((dispcnt >> 15) & 1) == 1;
@@ -35,20 +72,24 @@ void main()
             discard;
         }
     }
+    bool filler = singleScreen && fieldWidth == 256.0 && (uiCoord.x < 0.0 || uiCoord.x >= 1.0);
+    if (filler) {
+        color = sideBackground();
+    } else {
     for(int i=0; i<4; i++) {
         int bgNum = bgOrder[i];
         int curPrio = bgPriorities[bgNum];
         // Draw the OBJs that are at or below the current BG priority
         for(int j=3-oamsDrawn; j>curPrio; j--) {
-            if(texture(objTexture[j], fragTexCoord).a > 0.1) {
-                color = texture(objTexture[j], fragTexCoord);
+            if(sampleObj(j).a > 0.1) {
+                color = sampleObj(j);
                 currentBgDrawn = 4;
             }
             oamsDrawn++;
         }
         
         // Check obj window
-        if(objWindowEnabled && texture(objWindowTexture, fragTexCoord).a > 0.1)
+        if(objWindowEnabled && sampleWindow().a > 0.1)
         {
             // Inside the window
             if(((winout >> (bgNum+8)) & 1) == 0) {
@@ -61,59 +102,59 @@ void main()
             }
         }
         // Draw the current bg
-        if(texture(bgTexture[bgNum], fragTexCoord).a > 0.1) {
+        if(sampleBg(bgNum).a > 0.1) {
             //Handle blending
             if( (((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1) ){
                 // Alpha Blending Mode. bgNum is Target 1.
                 float alphaA = min(16.0, float(bldalpha & 31)) / 16.0;
                 float alphaB = min(16.0, float((bldalpha >> 8) & 31)) / 16.0;
                 if(bgNum == 0 && bg0as3d != 0) {
-                    alphaA = texture(bgTexture[0], fragTexCoord).a;
+                    alphaA = sampleBg(0).a;
                     alphaB = 1.0 - alphaA;
                 }
                 if((currentBgDrawn < 4) && (((bldcnt >> (8+currentBgDrawn)) & 1) == 1) ) {
-                    color.r = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).r *alphaA) + (texture(bgTexture[currentBgDrawn], fragTexCoord).r * alphaB)));
-                    color.g = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).g *alphaA) + (texture(bgTexture[currentBgDrawn], fragTexCoord).g * alphaB)));
-                    color.b = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).b *alphaA) + (texture(bgTexture[currentBgDrawn], fragTexCoord).b * alphaB)));
+                    color.r = min(1.0, ((sampleBg(bgNum).r *alphaA) + (sampleBg(currentBgDrawn).r * alphaB)));
+                    color.g = min(1.0, ((sampleBg(bgNum).g *alphaA) + (sampleBg(currentBgDrawn).g * alphaB)));
+                    color.b = min(1.0, ((sampleBg(bgNum).b *alphaA) + (sampleBg(currentBgDrawn).b * alphaB)));
                     color.a = 1.0;
                     currentBgDrawn = bgNum;
                 } else if( (currentBgDrawn == 4) && ( ( (bldcnt >> (8+currentBgDrawn)) & 1) == 1) ){
                     // Alpha blending where the highest OBJ pixel is the target
-                    color.r = min(1.0, ( (texture(bgTexture[bgNum], fragTexCoord).r *alphaA) + color.r * alphaB) );
-                    color.g = min(1.0, ( (texture(bgTexture[bgNum], fragTexCoord).g *alphaA) + color.g * alphaB) );
-                    color.b = min(1.0, ( (texture(bgTexture[bgNum], fragTexCoord).b *alphaA) + color.b * alphaB) );
+                    color.r = min(1.0, ( (sampleBg(bgNum).r *alphaA) + color.r * alphaB) );
+                    color.g = min(1.0, ( (sampleBg(bgNum).g *alphaA) + color.g * alphaB) );
+                    color.b = min(1.0, ( (sampleBg(bgNum).b *alphaA) + color.b * alphaB) );
                     color.a = 1.0;
                 } else if((currentBgDrawn == 5) && (((bldcnt >> (8+currentBgDrawn)) & 1) == 1)) {
                     // Alpha blending where the backdrop is the target
-                    color.r = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).r *alphaA) + backdropColor.r * alphaB));
-                    color.g = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).g *alphaA) + backdropColor.g * alphaB));
-                    color.b = min(1.0, ((texture(bgTexture[bgNum], fragTexCoord).b *alphaA) + backdropColor.b * alphaB));
+                    color.r = min(1.0, ((sampleBg(bgNum).r *alphaA) + backdropColor.r * alphaB));
+                    color.g = min(1.0, ((sampleBg(bgNum).g *alphaA) + backdropColor.g * alphaB));
+                    color.b = min(1.0, ((sampleBg(bgNum).b *alphaA) + backdropColor.b * alphaB));
                     color.a = 1.0;
                 } else {
-                    color = texture(bgTexture[bgNum], fragTexCoord);
+                    color = sampleBg(bgNum);
                     currentBgDrawn = bgNum;
                 }
             } else if((((bldcnt >> 6) & 0x3) == 2) && ((bldcnt >> bgNum & 1) == 1)) {
                 // Brightness Increase Mode. bgNum is Target 1.
                 float brightFactor = min(16.0, float(bldy & 31)) / 16.0;
-                //color.r = min(1.0, ( texture(bgTexture[bgNum], fragTexCoord).r + ((1.0 - texture(bgTexture[bgNum], fragTexCoord).r)*brightFactor)) );
-                //color.g = min(1.0, ( texture(bgTexture[bgNum], fragTexCoord).g + ((1.0 - texture(bgTexture[bgNum], fragTexCoord).g)*brightFactor)) );
-                //color.b = min(1.0, ( texture(bgTexture[bgNum], fragTexCoord).b + ((1.0 - texture(bgTexture[bgNum], fragTexCoord).b)*brightFactor)) );
-                color.r = texture(bgTexture[bgNum], fragTexCoord).r + (1.0 - texture(bgTexture[bgNum], fragTexCoord).r)*brightFactor;
-                color.g = texture(bgTexture[bgNum], fragTexCoord).g + (1.0 - texture(bgTexture[bgNum], fragTexCoord).g)*brightFactor;
-                color.b = texture(bgTexture[bgNum], fragTexCoord).b + (1.0 - texture(bgTexture[bgNum], fragTexCoord).b)*brightFactor;
+                //color.r = min(1.0, ( sampleBg(bgNum).r + ((1.0 - sampleBg(bgNum).r)*brightFactor)) );
+                //color.g = min(1.0, ( sampleBg(bgNum).g + ((1.0 - sampleBg(bgNum).g)*brightFactor)) );
+                //color.b = min(1.0, ( sampleBg(bgNum).b + ((1.0 - sampleBg(bgNum).b)*brightFactor)) );
+                color.r = sampleBg(bgNum).r + (1.0 - sampleBg(bgNum).r)*brightFactor;
+                color.g = sampleBg(bgNum).g + (1.0 - sampleBg(bgNum).g)*brightFactor;
+                color.b = sampleBg(bgNum).b + (1.0 - sampleBg(bgNum).b)*brightFactor;
                 color.a = 1.0;
                 currentBgDrawn = bgNum;
             } else if((((bldcnt >> 6) & 0x3) == 3) && ((bldcnt >> bgNum & 1) == 1)) {
                 // Brightness Decrease Mode. bgNum is Target 1.
                 float brightFactor = min(16.0, float(bldy & 31)) / 16.0;
-                color.r = max(0.0, ( texture(bgTexture[bgNum], fragTexCoord).r - ((texture(bgTexture[bgNum], fragTexCoord).r)*brightFactor)) );
-                color.g = max(0.0, ( texture(bgTexture[bgNum], fragTexCoord).g - ((texture(bgTexture[bgNum], fragTexCoord).g)*brightFactor)) );
-                color.b = max(0.0, ( texture(bgTexture[bgNum], fragTexCoord).b - ((texture(bgTexture[bgNum], fragTexCoord).b)*brightFactor)) );
+                color.r = max(0.0, ( sampleBg(bgNum).r - ((sampleBg(bgNum).r)*brightFactor)) );
+                color.g = max(0.0, ( sampleBg(bgNum).g - ((sampleBg(bgNum).g)*brightFactor)) );
+                color.b = max(0.0, ( sampleBg(bgNum).b - ((sampleBg(bgNum).b)*brightFactor)) );
                 color.a = 1.0;
                 currentBgDrawn = bgNum;
             } else {
-                color.rgb = texture(bgTexture[bgNum], fragTexCoord).rgb;
+                color.rgb = sampleBg(bgNum).rgb;
                 color.a = 1.0;
                 currentBgDrawn = bgNum;
             }
@@ -121,8 +162,8 @@ void main()
     }
     //Draw the remaining objs
     for(int i=3-oamsDrawn; i>=0; i--) {
-        if(texture(objTexture[i], fragTexCoord).a > 0.1) {
-            color = texture(objTexture[i], fragTexCoord);
+        if(sampleObj(i).a > 0.1) {
+            color = sampleObj(i);
             currentBgDrawn = 4;
         }
     }
@@ -130,6 +171,12 @@ void main()
         color = backdropColor;
     }
     
+    } // End scene composition; master brightness also affects the filler.
+    // Reduce the pre-fade color; presentation applies master brightness once.
+    if (averagePass) {
+        color.a = 1.0;
+        return;
+    }
     if(inMasterBrightMode == 1) {
         // brightness up
         color.r = color.r + ((1.0 - color.r) * (inMasterBrightFactor/16.0));

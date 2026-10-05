@@ -6,7 +6,8 @@
 typedef enum {
     SIM_CONFIG_SCREEN_LAYOUT_VERTICAL, /* Vertical screen layout (like a real DS) */
     SIM_CONFIG_SCREEN_LAYOUT_HORIZONTAL, /* DS screens side by side */
-    SIM_CONFIG_SCREEN_LAYOUT_LARGE /* One large screen and one small screen next to it */
+    SIM_CONFIG_SCREEN_LAYOUT_LARGE, /* One large screen and one small screen next to it */
+    SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY /* Physical top display, up to 21:9 */
 } SIM_config_screen_layout_type;
 
 #define SIM_CONFIG_JOY_HAT_MASK (0x10000)

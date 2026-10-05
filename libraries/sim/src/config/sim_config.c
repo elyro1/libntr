@@ -290,6 +290,9 @@ static const char * ScreenLayoutTypeToString(SIM_config_screen_layout_type layou
         case SIM_CONFIG_SCREEN_LAYOUT_HORIZONTAL:
             ret = "horizontal";
             break;
+        case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+            ret = "top_only";
+            break;
         case SIM_CONFIG_SCREEN_LAYOUT_LARGE:
             ret = "large";
             break;
@@ -305,6 +308,8 @@ static SIM_config_screen_layout_type StringToScreenLayoutType(const char * str)
         ret = SIM_CONFIG_SCREEN_LAYOUT_VERTICAL;
     } else if (strcmp(str, "horizontal") == 0) {
         ret = SIM_CONFIG_SCREEN_LAYOUT_HORIZONTAL;
+    } else if (strcmp(str, "top_only") == 0) {
+        ret = SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY;
     } else if (strcmp(str, "large") == 0) {
         ret = SIM_CONFIG_SCREEN_LAYOUT_LARGE;
     }
@@ -332,7 +337,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->windowHeight = 0;
     aConfig->windowWidth = 0;
 #endif
-    aConfig->screenLayout = SIM_CONFIG_SCREEN_LAYOUT_VERTICAL;
+    aConfig->screenLayout = SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY;
     aConfig->swapScreens = FALSE;
     aConfig->vsyncInterval = 1;
     aConfig->capFrameRate = TRUE;

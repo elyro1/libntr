@@ -70,6 +70,9 @@ int SIM_runNitroOSThread(void * thread);
 void * SIM_sndAlarm(void * arg);
 void SIM_u16ToRGB( u16 in, u8 * r, u8 *g, u8 * b );
 SIM_config_type * SIM_GetConfigPtr();
+// Field rendering opts in each logic frame; all other scenes use 4:3.
+// Returns the logical width for the matching projection (256..448).
+u32 SIM_SetFieldWidescreen(BOOL enabled);
 u64 SIM_GetRenderFrameTime();
 u64 SIM_GetFullFrameTime();
 const char * SIM_GetLibntrGitHash();

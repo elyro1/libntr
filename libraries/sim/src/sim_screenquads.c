@@ -490,9 +490,56 @@ static G3SIM_Vertex_t s_LargeScreenQuadSwapped[] = {
     }
 };
 
+static G3SIM_Vertex_t s_TopScreenQuad[] = {
+    {
+        .x = -1.0f,
+        .y = -1.0f,
+        .z = 1.0f,
+        .s = 0.0f,
+        .t = 0.5f,
+    },
+    {
+        .x = -1.0f,
+        .y = 1.0f,
+        .z = 1.0f,
+        .s = 0.0f,
+        .t = 1.0f,
+    },
+    {
+        .x = 1.0f,
+        .y = -1.0f,
+        .z = 1.0f,
+        .s = 1.0f,
+        .t = 0.5f,
+    },
+    {
+        .x = 1.0f,
+        .y = -1.0f,
+        .z = 1.0f,
+        .s = 1.0f,
+        .t = 0.5f,
+    },
+    {
+        .x = 1.0f,
+        .y = 1.0f,
+        .z = 1.0f,
+        .s = 1.0f,
+        .t = 1.0f,
+    },
+    {
+        .x = -1.0f,
+        .y = 1.0f,
+        .z = 1.0f,
+        .s = 0.0f,
+        .t = 1.0f,
+    }
+};
+
 G3SIM_Vertex_t * sim_GetScreenQuadArray(SIM_config_screen_layout_type layout, BOOL isSwapped)
 {
     switch(layout) {
+        case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+            return s_TopScreenQuad;
         default:
         case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
             return isSwapped ? s_VerticalScreenQuadSwapped : s_VerticalScreenQuad;
@@ -506,6 +553,8 @@ G3SIM_Vertex_t * sim_GetScreenQuadArray(SIM_config_screen_layout_type layout, BO
 int sim_GetScreenQuadVertexCount(SIM_config_screen_layout_type layout, BOOL isSwapped)
 {
     switch(layout) {
+        case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+            return 6;
         default:
         case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
             return isSwapped ? 12 : 6;

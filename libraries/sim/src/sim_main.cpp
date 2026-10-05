@@ -68,6 +68,10 @@ SIM_config_type s_SIM_config = {};
 // Thread
 extern OSThreadInfo OSi_ThreadInfo;
 
+static constexpr u32 s_MaxViewWidth = 448; // 192 * 21 / 9
+static u32 s_WindowViewWidth = 256;
+static u32 s_FieldViewWidth = 256;
+
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
 
 // SND
@@ -129,6 +133,10 @@ u8 s_SIM_g3tex[4 * 1024 * 1024];
 static GLuint g3FrameBuffer;
 static GLuint fboId;
 static GLuint g2FrameBuffer;
+static GLuint s_SideAverageFramebuffer;
+static GLuint s_SideAverageTexture;
+static bool s_SideAverageReady;
+static constexpr GLint s_SideAverageTexUnit = 10;
 
 // Texture Objects
 GLuint s_bgTextureId[4];
@@ -393,6 +401,10 @@ void *SIM_RenderInit(void *arg) {
   if (s_SIM_config.windowWidth == 0 || s_SIM_config.windowHeight == 0) {
     switch (s_SIM_config.screenLayout) {
     default:
+    case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+      windowHeight = 576;
+      windowWidth = 1024;
+      break;
     case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
       windowHeight = SIM_NDS_SCREEN_HEIGHT * 2 * 2;
       windowWidth = SIM_NDS_SCREEN_WIDTH * 2;
@@ -562,7 +574,7 @@ void *SIM_RenderInit(void *arg) {
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, g3RenderTextureId);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
-               SIM_NDS_SCREEN_WIDTH * s_SIM_config.internalResolutionScale,
+               s_MaxViewWidth * s_SIM_config.internalResolutionScale,
                SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale,
                0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -575,7 +587,7 @@ void *SIM_RenderInit(void *arg) {
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
   glRenderbufferStorage(
       GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
-      SIM_NDS_SCREEN_WIDTH * s_SIM_config.internalResolutionScale,
+      s_MaxViewWidth * s_SIM_config.internalResolutionScale,
       SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                             GL_RENDERBUFFER, g3RenderBufferId);
@@ -594,6 +606,28 @@ void *SIM_RenderInit(void *arg) {
 
   glGenFramebuffers(1, &g2FrameBuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  // Reduce a composed screen to a single color entirely on the GPU. A square,
+  // power-of-two target gives every part of the screen equal weight in mipmaps.
+  glGenTextures(1, &s_SideAverageTexture);
+  glActiveTexture(GL_TEXTURE0 + s_SideAverageTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_SideAverageTexture);
+  glTexStorage2D(GL_TEXTURE_2D, 9, GL_RGBA16F, 256, 256);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glGenFramebuffers(1, &s_SideAverageFramebuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, s_SideAverageFramebuffer);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         s_SideAverageTexture, 0);
+  s_SideAverageReady = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+  if (!s_SideAverageReady) {
+    printf("Side gradient framebuffer unavailable; using backdrop color.\n");
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
+  glActiveTexture(GL_TEXTURE0);
 
   // Setup G3 Shader Program
   g3shaderProgramID = glCreateProgram();
@@ -649,12 +683,16 @@ static void DrawEngine(BOOL isSub) {
   GLint bgPriorities[4];
 
   u32 dispSel = s_reg_GX_POWCNT >> 15;
+  const bool singleScreen = s_SIM_config.screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY;
+  if (singleScreen && !(dispSel ? !isSub : isSub)) {
+    return;
+  }
 
   // Get the enabled BGs
   u32 dispcnt = isSub ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT;
 
   bgEnabled[0] = (dispcnt >> 8) & 0x01;
-  bg0as3d = (dispcnt >> 3) & 0x01;
+  bg0as3d = !isSub && ((dispcnt >> 3) & 0x01);
   bgEnabled[1] = (dispcnt >> 8) & 0x02;
   bgEnabled[2] = (dispcnt >> 8) & 0x04;
   bgEnabled[3] = (dispcnt >> 8) & 0x08;
@@ -912,8 +950,44 @@ static void DrawEngine(BOOL isSub) {
       glGetUniformLocation(g2shaderProgramID, "inMasterBrightMode"),
       masterBrightMode);
 
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
+                     singleScreen ? (float)(s_FieldViewWidth > 256 ? s_FieldViewWidth : s_WindowViewWidth) : 256.0f);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldWidth"),
+                     (float)s_FieldViewWidth);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "singleScreen"), singleScreen);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageTexture"),
+                     s_SideAverageTexUnit);
+  const bool averageSides = singleScreen && s_FieldViewWidth == SIM_NDS_SCREEN_WIDTH &&
+                            s_WindowViewWidth > SIM_NDS_SCREEN_WIDTH && s_SideAverageReady;
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageValid"), averageSides);
   glBindVertexArray(g2vertexArray);
   glBindBuffer(GL_ARRAY_BUFFER, g2vertexBuffer);
+  if (averageSides) {
+    GLint viewport[4];
+    GLint framebuffer;
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+    const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    glDisable(GL_BLEND);
+    glActiveTexture(GL_TEXTURE0 + s_SideAverageTexUnit);
+    // Avoid sampling the texture attached to the reduction framebuffer.
+    glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
+    glBindFramebuffer(GL_FRAMEBUFFER, s_SideAverageFramebuffer);
+    glViewport(0, 0, 256, 256);
+    glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"), 256.0f);
+    glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "averagePass"), TRUE);
+    DrawScreenQuad();
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    if (blendEnabled) {
+      glEnable(GL_BLEND);
+    }
+    glBindTexture(GL_TEXTURE_2D, s_SideAverageTexture);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "averagePass"), FALSE);
+    glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
+                       (float)s_WindowViewWidth);
+  }
   DrawScreenQuad();
 
   // Clear out the textures
@@ -1017,6 +1091,27 @@ static void HandleJoystickKeyUp(int aKey) {
   }
 }
 
+static void Set3DViewport() {
+  const u32 scale = s_SIM_config.internalResolutionScale;
+  const u32 width = s_FieldViewWidth;
+  glViewport((s_MaxViewWidth - width) / 2 * scale,
+             (s_reg_GX_POWCNT >> 15) ? SIM_NDS_SCREEN_HEIGHT * scale : 0,
+             width * scale, SIM_NDS_SCREEN_HEIGHT * scale);
+}
+
+u32 SIM_SetFieldWidescreen(BOOL enabled) {
+  const u32 width = enabled && s_SIM_config.screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY
+                        ? s_WindowViewWidth : SIM_NDS_SCREEN_WIDTH;
+  if (s_FieldViewWidth != width) {
+    // Geometry buffered under the previous viewport must be submitted first.
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    s_FieldViewWidth = width;
+    Set3DViewport();
+  }
+  return width;
+}
+
 void *SIM_Render(void *arg) {
 
   SDL_Event Event;
@@ -1060,10 +1155,19 @@ void *SIM_Render(void *arg) {
     float aspectRatio;
 
     SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+    windowWidth = windowWidth > 0 ? windowWidth : 1;
+    windowHeight = windowHeight > 0 ? windowHeight : 1;
+    // Quantize to even logical pixels, keeping the 256px UI exactly centered.
+    s_WindowViewWidth = (u32)fmin(448.0, fmax(256.0,
+        192.0 * windowWidth / windowHeight)) & ~1u;
 
     // Scale the viewport to the correct aspect ratio and center it
     switch (s_SIM_config.screenLayout) {
     default:
+    case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+      // Present the width used by this frame's projection; resized width applies next frame.
+      aspectRatio = (float)(s_FieldViewWidth > 256 ? s_FieldViewWidth : s_WindowViewWidth) / SIM_NDS_SCREEN_HEIGHT;
+      break;
     case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
       aspectRatio = 256.0f / 384.0f;
       break;
@@ -1086,7 +1190,11 @@ void *SIM_Render(void *arg) {
       viewY = 0;
     }
 
-    glViewport(viewX, viewY, viewWidth, viewHeight);
+    // OpenGL uses drawable pixels; mouse input remains in SDL window coordinates.
+    int drawableWidth, drawableHeight;
+    SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+    glViewport(viewX * drawableWidth / windowWidth, viewY * drawableHeight / windowHeight,
+               viewWidth * drawableWidth / windowWidth, viewHeight * drawableHeight / windowHeight);
 
     // Set up the bounding box of the touch panel
     if (s_SIM_config.swapScreens) {
@@ -1294,7 +1402,7 @@ void *SIM_Render(void *arg) {
                               SIM_CONFIG_JOY_AXIS_MINUS_MASK);
         }
       }
-      if (Event.type == SDL_MOUSEBUTTONDOWN) {
+      if (Event.type == SDL_MOUSEBUTTONDOWN && s_SIM_config.screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY) {
         isMouseDown = 1;
         s_tpData.validity = 0;
         s_tpData.touch = 1;
@@ -1310,7 +1418,7 @@ void *SIM_Render(void *arg) {
     SDL_GetMouseState(&x, &y);
 
     // Convert touch coordinate to DS screen coordinates
-    if (x >= s_TouchPanelCoords[0] && x <= s_TouchPanelCoords[2] &&
+    if (s_SIM_config.screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY && x >= s_TouchPanelCoords[0] && x <= s_TouchPanelCoords[2] &&
         y >= s_TouchPanelCoords[1] && y <= s_TouchPanelCoords[3]) {
       s_tpData.x = (u16)map(x, s_TouchPanelCoords[0], s_TouchPanelCoords[2], 0,
                             SIM_NDS_SCREEN_WIDTH);
@@ -1410,16 +1518,8 @@ void *SIM_Render(void *arg) {
   glBindFramebuffer(GL_FRAMEBUFFER, g3FrameBuffer);
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
 
-  // Setup 3D Viewport
-  if (s_reg_GX_POWCNT >> 15) {
-    glViewport(0, SIM_NDS_SCREEN_HEIGHT * s_SIM_config.internalResolutionScale,
-               SIM_NDS_SCREEN_WIDTH * s_SIM_config.internalResolutionScale,
-               SIM_NDS_SCREEN_HEIGHT * s_SIM_config.internalResolutionScale);
-  } else {
-    glViewport(0, 0,
-               SIM_NDS_SCREEN_WIDTH * s_SIM_config.internalResolutionScale,
-               SIM_NDS_SCREEN_HEIGHT * s_SIM_config.internalResolutionScale);
-  }
+  // Restore the view that was selected by the game for this frame.
+  Set3DViewport();
 
   // Activate 3D shader
   glUseProgram(g3shaderProgramID);

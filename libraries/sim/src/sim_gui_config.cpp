@@ -18,7 +18,8 @@ static SIM_config_type * sConfig;
 static constexpr const char * ScreenLayoutStrings[] = {
     "Vertical",
     "Horizontal",
-    "Large Screen"
+    "Large Screen",
+    "Top Screen / Widescreen"
 };
 
 static constexpr const char * VblankStrings[] = {
@@ -40,10 +41,13 @@ void AppConfigMain(bool *openState) {
     
     ImGui::Begin("Config", openState);
 
-    if(ImGui::Combo("Layout", &screenLayout, ScreenLayoutStrings, 3, 3)) {
+    if(ImGui::Combo("Layout", &screenLayout, ScreenLayoutStrings, 4, 4)) {
         configChanged = true;
     }
-    if(ImGui::Checkbox("Swap Screens", &swapScreens)) {
+    if (screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY) {
+        ImGui::TextWrapped("Overworld expands up to 21:9. Bottom-screen controls are hidden in this prototype.");
+    }
+    if(screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY && ImGui::Checkbox("Swap Screens", &swapScreens)) {
         configChanged = true;
     }
     if(ImGui::Combo("VSync", &vSyncInterval, VblankStrings, 3, 3)) {
