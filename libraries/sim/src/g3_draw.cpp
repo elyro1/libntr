@@ -24,10 +24,21 @@
 
 #define getbit(x,n) ( ( (x) >> (n) ) & 1 )
 
+// Deferred polygons must retain their own fog state. Flashlight models disable
+// fog, so inheriting the last submitted polygon's uniforms lights the whole gym.
+typedef struct {
+	int enabled;
+	u32 control;
+	u32 color;
+	u32 offset;
+	u8 density[32];
+} g3_fog_state_t;
+
 typedef struct {
 	float zIdx;
 	GLuint textureId;
 	G3SIM_PolygonAttr_t polygonAttr;
+	g3_fog_state_t fog;
 	G3SIM_TexImageParam_t texImageParam;
 	G3SIM_Vertex_t * verts;
 	u32 vertsCount;
@@ -166,6 +177,49 @@ void G3SIM_DrawInit()
 	glDisableVertexAttribArray(2);
 }
 
+static void G3SIM_ApplyFog(const g3_fog_state_t &fog)
+{
+	// Set the fog attributes in the shader
+	GLint useFogLoc = glGetUniformLocation(g3shaderProgramID, "useFog");
+	int useFog = fog.enabled;
+	glProgramUniform1i(g3shaderProgramID, useFogLoc , useFog);
+	if(useFog) {
+		// Fog color
+		GLint fogColorLoc = glGetUniformLocation(g3shaderProgramID, "fogColor");
+		u32 fogRed = fog.color & 0b11111;
+		u32 fogGreen = (fog.color >> 5) & 0b11111;
+		u32 fogBlue = (fog.color >> 10) & 0b11111;
+		u32 fogAlpha = (fog.color >> 16) & 0b11111;
+		float fogRedF = (float)fogRed / 32.0f;
+		float fogGreenF = (float)fogGreen / 32.0f;
+		float fogBlueF = (float)fogBlue / 32.0f;
+		float fogAlphaF = (float)fogAlpha / 32.0f;
+		glProgramUniform4f(g3shaderProgramID, fogColorLoc, fogRedF, fogGreenF, fogBlueF, fogAlphaF);
+
+
+		u32 fogShift = (fog.control >> 8) & 0b1111;
+		u32 fogStep = 0x400 >> fogShift;
+
+		//Fog depth boundaries
+		u32 fogOffset = fog.offset;
+
+		float fogDepthBoundary[32];
+		float fogDensity[32];
+		const u8 * fogTablePtr = fog.density;
+		for(int i=0; i < 32; i++) {
+			fogDepthBoundary[i] = ((float)(fogOffset + fogStep*(i+1)) / 32767.0f) * 2.0f - 1.0f;
+			fogDensity[i] = (float)fogTablePtr[i] / 127.0f;
+		}
+
+		GLint fogDepthBoundaryLoc = glGetUniformLocation(g3shaderProgramID, "fogDepthBoundary");
+		glProgramUniform1fv(g3shaderProgramID, fogDepthBoundaryLoc, 32, fogDepthBoundary);
+
+		GLint fogDensityLoc = glGetUniformLocation(g3shaderProgramID, "fogDensity");
+		glProgramUniform1fv(g3shaderProgramID, fogDensityLoc, 32, fogDensity);
+	}
+
+}
+
 void G3SIM_FlushArray()
 {
 	if(s_G3DrawCurVertIdx == 0) {
@@ -279,48 +333,13 @@ void G3SIM_FlushArray()
 	GLint polygonModeLoc = glGetUniformLocation(g3shaderProgramID, "polygonMode");
 	glProgramUniform1i(g3shaderProgramID, polygonModeLoc , s_curPolygonAttr.polygonMode);
 
-	// Set the fog attributes in the shader
-	GLint useFogLoc = glGetUniformLocation(g3shaderProgramID, "useFog");
-	int useFog = getbit(s_reg_G3X_DISP3DCNT, 7);
-	if(!s_curPolygonAttr.fogEnable) {
-		useFog = 0;
-	}
-	glProgramUniform1i(g3shaderProgramID, useFogLoc , useFog);
-	if(useFog) {
-		// Fog color
-		GLint fogColorLoc = glGetUniformLocation(g3shaderProgramID, "fogColor");
-		u32 fogRed = s_reg_G3X_FOG_COLOR & 0b11111;
-		u32 fogGreen = (s_reg_G3X_FOG_COLOR >> 5) & 0b11111;
-		u32 fogBlue = (s_reg_G3X_FOG_COLOR >> 10) & 0b11111;
-		u32 fogAlpha = (s_reg_G3X_FOG_COLOR >> 16) & 0b11111;
-		float fogRedF = (float)fogRed / 32.0f;
-		float fogGreenF = (float)fogGreen / 32.0f;
-		float fogBlueF = (float)fogBlue / 32.0f;
-		float fogAlphaF = (float)fogAlpha / 32.0f;
-		glProgramUniform4f(g3shaderProgramID, fogColorLoc, fogRedF, fogGreenF, fogBlueF, fogAlphaF);
-
-
-		u32 fogShift = (s_reg_G3X_DISP3DCNT >> 8) & 0b1111;
-		u32 fogStep = 0x400 >> fogShift;
-
-		//Fog depth boundaries
-		u32 fogOffset = s_reg_G3X_FOG_OFFSET;
-
-		float fogDepthBoundary[32];
-		float fogDensity[32];
-		u8 * fogTablePtr = (u8*)&s_reg_G3X_FOG_TABLE_0;
-		for(int i=0; i < 32; i++) {
-			fogDepthBoundary[i] = ((float)(fogOffset + fogStep*(i+1)) / 32767.0f) * 2.0f - 1.0f;
-			fogDensity[i] = (float)fogTablePtr[i] / 127.0f;
-		}
-
-		GLint fogDepthBoundaryLoc = glGetUniformLocation(g3shaderProgramID, "fogDepthBoundary");
-		glProgramUniform1fv(g3shaderProgramID, fogDepthBoundaryLoc, 32, fogDepthBoundary);
-
-		GLint fogDensityLoc = glGetUniformLocation(g3shaderProgramID, "fogDensity");
-		glProgramUniform1fv(g3shaderProgramID, fogDensityLoc, 32, fogDensity);
-	}
-
+	g3_fog_state_t fog = {};
+	fog.control = s_reg_G3X_DISP3DCNT;
+	fog.enabled = getbit(fog.control, 7) && s_curPolygonAttr.fogEnable;
+	fog.color = s_reg_G3X_FOG_COLOR;
+	fog.offset = s_reg_G3X_FOG_OFFSET;
+	memcpy(fog.density, (const void *)&s_reg_G3X_FOG_TABLE_0, sizeof(fog.density));
+	G3SIM_ApplyFog(fog);
 
 
 	// If this is a translucent draw, save it for the end of the frame to render it last
@@ -347,6 +366,8 @@ void G3SIM_FlushArray()
         	         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s_texImageParam.textureSSize, s_texImageParam.textureTSize, GL_RGBA, GL_UNSIGNED_BYTE, (void *)texBuf);
 		}
+
+		item->fog = fog;
 
 		//Copy over the polygonattr
 		memcpy(&item->polygonAttr, &s_curPolygonAttr, sizeof(G3SIM_PolygonAttr_t));
@@ -404,6 +425,8 @@ void G3SIM_DrawItems()
 		// Set the polygon mode in the shader
 		GLint polygonModeLoc = glGetUniformLocation(g3shaderProgramID, "polygonMode");
 		glProgramUniform1i(g3shaderProgramID, polygonModeLoc, item->polygonAttr.polygonMode);
+
+		G3SIM_ApplyFog(item->fog);
 
 		glBindVertexArray(s_G3DrawVertexArray);
 		glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);

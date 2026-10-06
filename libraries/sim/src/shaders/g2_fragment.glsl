@@ -2,6 +2,9 @@ R""(
 #version 420 core
 
 uniform sampler2D myTexture;
+uniform sampler2D g3FogTexture;
+uniform float g3FogAlpha;
+uniform bool g3FogAlphaOnly;
 uniform sampler2D bgTexture[4];
 uniform sampler2D objTexture[5]; //The extra element is for OBJs drawn on top of all BGs
 uniform sampler2D objWindowTexture;
@@ -33,7 +36,11 @@ vec2 worldCoord;
 
 vec4 sampleBg(int layer) {
     if (layer == 0 && bg0as3d != 0) {
-        return texture(bgTexture[layer], worldCoord);
+        vec4 scene = texture(bgTexture[layer], worldCoord);
+        vec4 fog = texture(g3FogTexture, worldCoord);
+        if (!g3FogAlphaOnly) scene.rgb = mix(scene.rgb, fog.rgb, fog.a);
+        scene.a = mix(scene.a, g3FogAlpha, fog.a);
+        return scene;
     }
     // Field weather/shading overlays blend BG2 over the 3D world. Repeat
     // seamless textures; extend cave mask edges without repeating the opening.

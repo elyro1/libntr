@@ -196,6 +196,7 @@ static GLuint g3TextureId16x64;
 static GLuint g3TextureId8;
 static GLuint g3TextureId8x16;
 static GLuint g3RenderTextureId;
+static GLuint g3FogTextureId;
 static GLuint dummyScreenTextureId;
 static GLuint objWindowTextureId;
 
@@ -615,6 +616,21 @@ void *SIM_RenderInit(void *arg) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                          g3RenderTextureId, 0);
+  // Keep each pixel's fog state separate from the blended scene color.
+  glGenTextures(1, &g3FogTextureId);
+  glBindTexture(GL_TEXTURE_2D, g3FogTextureId);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+               s_MaxViewWidth * s_SIM_config.internalResolutionScale,
+               SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale,
+               0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
+                         g3FogTextureId, 0);
+  const GLenum g3DrawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+  glDrawBuffers(2, g3DrawBuffers);
   glGenRenderbuffers(1, &g3RenderBufferId);
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
   glRenderbufferStorage(
@@ -687,7 +703,8 @@ void *SIM_RenderInit(void *arg) {
   glGenBuffers(1, &g2vertexBuffer);
 
   glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                      GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
   SDL_GL_SwapWindow(window);
 
@@ -921,6 +938,14 @@ static void DrawEngine(BOOL isSub) {
   } else {
     glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
   }
+
+  glActiveTexture(GL_TEXTURE11);
+  glBindTexture(GL_TEXTURE_2D, g3FogTextureId);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogTexture"), 11);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogAlpha"),
+                     (float)((s_reg_G3X_FOG_COLOR >> 16) & 31) / 32.0f);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogAlphaOnly"),
+                     (s_reg_G3X_DISP3DCNT & (1 << 6)) != 0);
 
   // Setup the OBJWindow texture
   glActiveTexture(GL_TEXTURE0 + s_objWindowTexUnit);
@@ -1560,6 +1585,9 @@ void *SIM_Render(void *arg) {
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
+  // Fog state belongs to the last visible polygon, including translucent beams.
+  glEnablei(GL_BLEND, 0);
+  glDisablei(GL_BLEND, 1);
 
   glCullFace(GL_FRONT);
   glFrontFace(GL_CW);

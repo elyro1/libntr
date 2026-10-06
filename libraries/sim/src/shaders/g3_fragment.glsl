@@ -11,7 +11,8 @@ uniform float fogDensity[32];
 smooth in vec2 fragTexCoord;
 smooth in vec4 fragInColor;
 smooth in vec4 coords;
-out vec4 color;
+layout (location = 0) out vec4 color;
+layout (location = 1) out vec4 fogData;
 
 void main()
 {
@@ -32,6 +33,10 @@ void main()
         shadedColor = fragInColor;
     }
     
+    // Fog is applied after translucent polygons have been blended. A flashlight
+    // disables fog for covered pixels, revealing the already rendered world.
+    color = shadedColor;
+    fogData = vec4(0.0);
     if(useFog == 1) {
         float fog_maxdist = 1.0;
         float fog_mindist = 0.5;
@@ -55,9 +60,7 @@ void main()
                 fogFactor = (fogDensity[foundIdx - 1] * (interpolationFactor)) + (fogDensity[foundIdx] * (1.0-interpolationFactor));
             }
         }
-        color = mix(shadedColor, fogColor, fogFactor);
-    } else {
-     color = shadedColor;
+        fogData = vec4(fogColor.rgb, fogFactor);
     }
 }
 )""
