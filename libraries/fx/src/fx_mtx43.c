@@ -108,7 +108,18 @@ void MTX_TransApply43 (const MtxFx43 *pSrc, MtxFx43 *pDst, fx32 x, fx32 y, fx32 
 #ifdef SDK_PORT
 void MTX_Scale43_(register MtxFx43* pDst, register fx32 x, register fx32 y, register fx32 z)
 {
-    SIM_assert_always_msg("Not implemented");
+    pDst->_00 = x;
+    pDst->_01 = 0;
+    pDst->_02 = 0;
+    pDst->_10 = 0;
+    pDst->_11 = y;
+    pDst->_12 = 0;
+    pDst->_20 = 0;
+    pDst->_21 = 0;
+    pDst->_22 = z;
+    pDst->_30 = 0;
+    pDst->_31 = 0;
+    pDst->_32 = 0;
 }
 #else
 
