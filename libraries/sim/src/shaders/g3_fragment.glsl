@@ -26,7 +26,7 @@ void main()
         } else {
             shadedColor = texture(myTexture, fragTexCoord);
         }
-        if( texture(myTexture, fragTexCoord).a < 0.05) {
+        if( shadedColor.a <= 0.0) {
             discard;
         }
     } else {

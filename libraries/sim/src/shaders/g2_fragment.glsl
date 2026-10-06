@@ -37,6 +37,9 @@ vec2 worldCoord;
 vec4 sampleBg(int layer) {
     if (layer == 0 && bg0as3d != 0) {
         vec4 scene = texture(bgTexture[layer], worldCoord);
+        // Rendering into transparent black stores premultiplied RGB. Recover
+        // the source color before applying fog and DS background blending.
+        if (scene.a > 0.0) scene.rgb /= scene.a;
         vec4 fog = texture(g3FogTexture, worldCoord);
         if (!g3FogAlphaOnly) scene.rgb = mix(scene.rgb, fog.rgb, fog.a);
         scene.a = mix(scene.a, g3FogAlpha, fog.a);
@@ -122,9 +125,13 @@ void main()
             }
         }
         // Draw the current bg
-        if(sampleBg(bgNum).a > 0.1) {
-            //Handle blending
-            if( (((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1) ){
+        if(sampleBg(bgNum).a > 0.0) {
+            // 3D BG0 uses per-pixel alpha even when it is not selected as a
+            // first target in BLDCNT, as in the default battle animation setup.
+            bool is3D = bgNum == 0 && bg0as3d != 0;
+            bool secondTarget = ((bldcnt >> (8 + currentBgDrawn)) & 1) != 0;
+            if ((is3D && secondTarget)
+                || ((((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1))) {
                 // Alpha Blending Mode. bgNum is Target 1.
                 float alphaA = min(16.0, float(bldalpha & 31)) / 16.0;
                 float alphaB = min(16.0, float((bldalpha >> 8) & 31)) / 16.0;
