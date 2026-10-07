@@ -1,3 +1,6 @@
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+#include <simulator/sim.h>
+#endif
 #include <nitro/gx/gx_load.h>
 #include <nitro/gx/gx_vramcnt.h>
 #if SDK_VERSION_MAJOR == 4
@@ -182,6 +185,14 @@ sTexStartAddrTable[16] = {
 
 void GX_LoadTexEx (GXVRamTex tex, const void *pSrc, u32 destSlotAddr, u32 szByte)
 {
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+    if (destSlotAddr >= 0x80000) {
+        void *destination = SIM_GetExtendedTextureStorage(destSlotAddr, szByte);
+        SDK_ASSERT(destination != NULL);
+        if (destination) MI_CpuCopy32(pSrc, destination, szByte);
+        return;
+    }
+#endif
 	u32 base1, base2, szBlk1;
 	void *pLCDC;
 
@@ -242,6 +253,14 @@ void GX_BeginLoadTex (void)
 
 void GX_LoadTex (const void *pSrc, u32 destSlotAddr, u32 szByte)
 {
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+    if (destSlotAddr >= 0x80000) {
+        void *destination = SIM_GetExtendedTextureStorage(destSlotAddr, szByte);
+        SDK_ASSERT(destination != NULL);
+        if (destination) MI_CpuCopy32(pSrc, destination, szByte);
+        return;
+    }
+#endif
 	void *pLCDC;
 	SDK_NULL_ASSERT(pSrc);
 

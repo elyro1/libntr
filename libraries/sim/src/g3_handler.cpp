@@ -1574,7 +1574,11 @@ void G3SIM_TexCoord(u32 data)
 //TexImageParam
 void G3SIM_TexImageParam(u32 data)
 {
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+    s_texImageParam.textureOffset = SIM_DecodeTextureAddress(&data);
+#else
     s_texImageParam.textureOffset = ((u16)data) << 3;
+#endif
     s_texImageParam.repeatS = (data & 0b10000000000000000) >> 16;
     s_texImageParam.repeatT = (data & 0b100000000000000000) >> 17;
     s_texImageParam.flipS = (data & 0b1000000000000000000) >> 18;

@@ -1,3 +1,6 @@
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+#include <simulator/sim.h>
+#endif
 #include <simulator/g3_draw.h>
 
 #include <simulator/g3_handler.h>
@@ -255,7 +258,13 @@ void G3SIM_FlushArray()
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 		}
 
-		u8 * vramTex = (u8*)(getTextureVramBank() + s_texImageParam.textureOffset);
+        u8 *vramTex;
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+        if (s_texImageParam.textureOffset >= 0x80000)
+            vramTex = (u8 *)SIM_GetExtendedTextureStorage(s_texImageParam.textureOffset, 0);
+        else
+#endif
+            vramTex = (u8 *)(getTextureVramBank() + s_texImageParam.textureOffset);
 		u8 * vramPltt = (u8*)(getTexPlttVramBank() + s_texPlttBase);
 		u16 * colorAddr = (u16*)vramPltt;
 

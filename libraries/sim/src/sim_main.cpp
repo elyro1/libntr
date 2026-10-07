@@ -4,6 +4,8 @@ extern "C" int NitroSpMain(void *arg);
 #define _POSIX_C_SOURCE 199309L
 
 #include <string>
+#include <mutex>
+#include <unordered_map>
 #include <pthread.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_events.h>
@@ -99,6 +101,59 @@ static struct timespec s_SIM_lastFrameEnd;
 static u64 sRenderFrameTime;
 static u64 sFullFrameTime;
 static bool sFastForwardActive = false;
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+static unsigned char sExtendedTextures[4 * 1024 * 1024];
+struct VirtualTexture { u32 address; u32 flags; };
+static VirtualTexture sVirtualTextures[65536];
+static std::unordered_map<u64, u16> sVirtualTextureIDs;
+static std::mutex sVirtualTextureMutex;
+
+extern "C" void SIM_ResetVirtualTextureAddresses(void) {
+  // Finish queued draws before IDs can be reused by a new graphics pipeline.
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  std::lock_guard<std::mutex> lock(sVirtualTextureMutex);
+  sVirtualTextureIDs.clear();
+  memset(sVirtualTextures, 0, sizeof(sVirtualTextures));
+}
+
+extern "C" void *SIM_GetExtendedTextureStorage(u32 address, u32 size) {
+  if (address < 0x80000 || address > sizeof(sExtendedTextures) ||
+      size > sizeof(sExtendedTextures) - address) return nullptr;
+  return sExtendedTextures + address;
+}
+
+extern "C" u32 SIM_EncodeTextureAddress(u32 parameter, u32 baseAddress) {
+  const u32 address = baseAddress + ((parameter & 0xffff) << 3);
+  if (address < 0x80000) return (parameter & ~0xffffU) | (address >> 3);
+  const u32 flags = parameter & 0x3c000000;
+  const u64 identity = ((u64)flags << 32) | address;
+  std::lock_guard<std::mutex> lock(sVirtualTextureMutex);
+  auto found = sVirtualTextureIDs.find(identity);
+  u16 id;
+  if (found != sVirtualTextureIDs.end()) id = found->second;
+  else {
+    if (sVirtualTextureIDs.size() >= 65535) { fprintf(stderr, "Virtual texture IDs exhausted\n"); abort(); }
+    id = (u16)(sVirtualTextureIDs.size() + 1);
+    sVirtualTextureIDs.emplace(identity, id);
+    sVirtualTextures[id] = {address, flags};
+  }
+  return (parameter & ~0x3c00ffffU) | 0x20000000 | id;
+}
+
+extern "C" u32 SIM_DecodeTextureAddress(u32 *parameter) {
+  if ((*parameter & 0x3c000000) == 0x20000000 && (*parameter & 0xffff)) {
+    std::lock_guard<std::mutex> lock(sVirtualTextureMutex);
+    const auto entry = sVirtualTextures[*parameter & 0xffff];
+    if (entry.address) {
+      *parameter = (*parameter & ~0x3c00ffffU) | entry.flags;
+      return entry.address;
+    }
+  }
+  return (*parameter & 0xffff) << 3;
+}
+#endif
+
 static constexpr u64 sNormalFrameBudgetNs = 16600000;
 static constexpr u64 sFastForwardMultiplier = 5;
 

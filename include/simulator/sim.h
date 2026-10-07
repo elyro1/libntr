@@ -73,6 +73,12 @@ SIM_config_type * SIM_GetConfigPtr();
 // Field rendering opts in each logic frame; all other scenes use 4:3.
 // Returns the logical width for the matching projection (256..448).
 u32 SIM_SetFieldWidescreen(BOOL enabled);
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+void SIM_ResetVirtualTextureAddresses(void);
+void *SIM_GetExtendedTextureStorage(u32 address, u32 size);
+u32 SIM_EncodeTextureAddress(u32 parameter, u32 baseAddress);
+u32 SIM_DecodeTextureAddress(u32 *parameter);
+#endif
 // Repeat seamless weather BG2 textures across the wide field viewport.
 void SIM_SetFieldOverlayTiled(BOOL enabled);
 u64 SIM_GetRenderFrameTime();
