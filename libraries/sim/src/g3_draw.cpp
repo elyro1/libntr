@@ -223,6 +223,16 @@ static void G3SIM_ApplyFog(const g3_fog_state_t &fog)
 
 }
 
+static void G3SIM_ApplyTextureWrap(const G3SIM_TexImageParam_t &texture)
+{
+	// Flip applies only to repeated coordinates; otherwise the DS clamps to
+	// the edge texel. Repeating clamped effect textures exposes extra copies.
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+		!texture.repeatS ? GL_CLAMP_TO_EDGE : (texture.flipS ? GL_MIRRORED_REPEAT : GL_REPEAT));
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+		!texture.repeatT ? GL_CLAMP_TO_EDGE : (texture.flipT ? GL_MIRRORED_REPEAT : GL_REPEAT));
+}
+
 void G3SIM_FlushArray()
 {
 	if(s_G3DrawCurVertIdx == 0) {
@@ -244,19 +254,7 @@ void G3SIM_FlushArray()
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture( GL_TEXTURE_2D, g3TextureId );
 
-		if(s_texImageParam.flipS)
-		{
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-		} else {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		}
-
-		if(s_texImageParam.flipT)
-		{
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
-		} else {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		}
+		G3SIM_ApplyTextureWrap(s_texImageParam);
 
         u8 *vramTex;
 #if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
@@ -368,8 +366,7 @@ void G3SIM_FlushArray()
 			glBindTexture(GL_TEXTURE_2D, item->textureId);
         	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			G3SIM_ApplyTextureWrap(s_texImageParam);
 	
         	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_texImageParam.textureSSize, s_texImageParam.textureTSize, 0,
         	         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -417,18 +414,8 @@ void G3SIM_DrawItems()
 			glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useTexture") , 0);
 		}
 
-		if(item->texImageParam.flipS)
-		{
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-		} else {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		}
-
-		if(item->texImageParam.flipT)
-		{
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
-		} else {
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		if(item->textureId != 0) {
+			G3SIM_ApplyTextureWrap(item->texImageParam);
 		}
 
 		// Set the polygon mode in the shader
