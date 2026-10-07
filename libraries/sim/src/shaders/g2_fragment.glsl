@@ -161,6 +161,10 @@ void main()
                     color = sampleBg(bgNum);
                     currentBgDrawn = bgNum;
                 }
+                // The blended background becomes the top layer even when its
+                // second target was an OBJ or the backdrop. Later layers must
+                // blend against it, and the final fallback must not erase it.
+                currentBgDrawn = bgNum;
             } else if((((bldcnt >> 6) & 0x3) == 2) && ((bldcnt >> bgNum & 1) == 1)) {
                 // Brightness Increase Mode. bgNum is Target 1.
                 float brightFactor = min(16.0, float(bldy & 31)) / 16.0;
