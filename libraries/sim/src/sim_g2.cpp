@@ -251,7 +251,30 @@ void G2SIM_DrawBG(u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub) {
 #endif
 }
 
-void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum) {
+static struct { u32 address; u32 size; } s_FieldTiledSpriteRanges[4];
+
+void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled) {
+  for (auto &range : s_FieldTiledSpriteRanges) {
+    if (range.size && range.address == address) {
+      range.size = enabled ? size : 0;
+      return;
+    }
+  }
+  if (enabled) {
+    for (auto &range : s_FieldTiledSpriteRanges) {
+      if (!range.size) { range.address = address; range.size = size; return; }
+    }
+  }
+}
+
+BOOL G2SIM_HasFieldTiledSprites(void) {
+  for (const auto &range : s_FieldTiledSpriteRanges) {
+    if (range.size) return TRUE;
+  }
+  return FALSE;
+}
+
+void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL tiledOnly) {
   u32 dispcnt;
   u16 *oam;
   u8 *pixelBuf;
@@ -292,6 +315,16 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum) {
 
     if ((attrib[2] & 0x0C00) != bgnum) {
       continue;
+    }
+    if (tiledOnly) {
+      if (isSub || !(dispcnt & 0x10)) continue;
+      const u32 address = (attrib[2] & 0x03FF) << (5 + ((dispcnt >> 20) & 3));
+      bool tiled = false;
+      for (const auto &range : s_FieldTiledSpriteRanges) {
+        if (range.size && address >= range.address && address - range.address < range.size)
+          tiled = true;
+      }
+      if (!tiled) continue;
     }
     u8 iswin = (((attrib[0] >> 10) & 0x3) == 2);
 

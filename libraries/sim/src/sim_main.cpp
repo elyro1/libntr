@@ -75,6 +75,9 @@ static constexpr u32 s_MaxViewWidth = 448; // 192 * 21 / 9
 static u32 s_WindowViewWidth = 256;
 static u32 s_FieldViewWidth = 256;
 static BOOL s_FieldOverlayTiled = FALSE;
+static GLuint s_FieldParticlesTexture;
+static constexpr GLint s_FieldParticlesTexUnit = 12;
+static u8 s_FieldParticlesPixels[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
 
@@ -565,6 +568,16 @@ void *SIM_RenderInit(void *arg) {
                  SIM_NDS_SCREEN_HEIGHT * 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
   }
 
+  glGenTextures(1, &s_FieldParticlesTexture);
+  glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
+  glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SIM_NDS_SCREEN_WIDTH,
+              SIM_NDS_SCREEN_HEIGHT * 2, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
   glGenTextures(5, s_objTextureId);
   glActiveTexture(GL_TEXTURE0);
 
@@ -897,7 +910,7 @@ static void DrawEngine(BOOL isSub) {
     for (int bgnum = 0x0C00; bgnum >= 0x0000; bgnum -= 0x0400) {
       memset(OBJLine, 0, sizeof(OBJLine));
       memset(OBJWindow, 0, sizeof(OBJWindow));
-      G2SIM_DrawOBJ(i, isSub, bgnum);
+      G2SIM_DrawOBJ(i, isSub, bgnum, FALSE);
       u8 *pixelBuf;
       u8 *objWindowBuf = isSub ? objWindowsTex : objWindowTex;
       switch (bgnum) {
@@ -939,6 +952,39 @@ static void DrawEngine(BOOL isSub) {
       }
     }
   }
+
+  // Keep the native OBJ composition intact. The extra texture contains only
+  // registered field particles and is sampled exclusively outside native width.
+  const bool fieldParticlesEnabled = !isSub && s_FieldViewWidth > SIM_NDS_SCREEN_WIDTH
+                                     && G2SIM_HasFieldTiledSprites();
+  if (fieldParticlesEnabled) {
+    glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
+    for (int priority = 0; priority < 4; priority++) {
+      memset(s_FieldParticlesPixels, 0, sizeof(s_FieldParticlesPixels));
+      for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+        memset(OBJLine, 0, sizeof(OBJLine));
+        memset(OBJWindow, 0, sizeof(OBJWindow));
+        G2SIM_DrawOBJ(line, FALSE, priority << 10, TRUE);
+        for (int x = 0; x < SIM_NDS_SCREEN_WIDTH; x++) {
+          const u8 index = OBJLine[0][x] & 0xFF;
+          if (index) {
+            u8 r, g, b;
+            SIM_u16ToRGB(((u16 *)s_HW_OBJ_PLTT)[index], &r, &g, &b);
+            G2SIM_PlotPixel(s_FieldParticlesPixels, r, g, b, x, line, FALSE);
+          }
+        }
+      }
+      glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, priority,
+                     SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT * 2, 1,
+                     GL_RGBA, GL_UNSIGNED_BYTE, s_FieldParticlesPixels);
+    }
+  }
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldParticlesTexture"),
+                     s_FieldParticlesTexUnit);
+
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldParticlesEnabled"),
+                     fieldParticlesEnabled);
 
   int drawnOAMs = 0;
 
