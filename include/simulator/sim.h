@@ -11,6 +11,7 @@
 
 #define SIM_NDS_SCREEN_WIDTH 256
 #define SIM_NDS_SCREEN_HEIGHT 192
+#define SIM_FIELD_SPRITE_WIDTH 448
 
 #define SIM_NDS_SCREEN_SCALE_FACTOR 4
 #define SIM_NDS_WINDOW_SCALE_FACTOR 2
@@ -83,6 +84,8 @@ u32 SIM_DecodeTextureAddress(u32 *parameter);
 void SIM_SetFieldOverlayTiled(BOOL enabled);
 // Register/unregister a MAIN OBJ VRAM range containing seamless field particles.
 void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled);
+// Continue selected field sprites past the native screen edges without repeating.
+void SIM_SetFieldWideSpriteRange(u32 address, u32 size, BOOL enabled);
 u64 SIM_GetRenderFrameTime();
 u64 SIM_GetFullFrameTime();
 const char * SIM_GetLibntrGitHash();

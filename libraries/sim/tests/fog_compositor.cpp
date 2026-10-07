@@ -88,6 +88,7 @@ int main() {
     glUniform1iv(location("bgOrder"), 4, order);
     glUniform1iv(location("bgPriorities"), 4, priorities);
     glUniform1i(location("g3FogTexture"), 1);
+    glUniform1i(location("fieldParticlesTexture"), 5);
     glUniform1i(location("objWindowTexture"), 3);
     glUniform1i(location("bg0as3d"), 1);
     glUniform1f(location("presentationWidth"), 448);

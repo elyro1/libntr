@@ -77,7 +77,7 @@ static u32 s_FieldViewWidth = 256;
 static BOOL s_FieldOverlayTiled = FALSE;
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
-static u8 s_FieldParticlesPixels[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
+static u8 s_FieldParticlesPixels[4 * SIM_FIELD_SPRITE_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
 
@@ -575,7 +575,7 @@ void *SIM_RenderInit(void *arg) {
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SIM_NDS_SCREEN_WIDTH,
+  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SIM_FIELD_SPRITE_WIDTH,
               SIM_NDS_SCREEN_HEIGHT * 2, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
   glGenTextures(5, s_objTextureId);
@@ -954,29 +954,30 @@ static void DrawEngine(BOOL isSub) {
   }
 
   // Keep the native OBJ composition intact. The extra texture contains only
-  // registered field particles and is sampled exclusively outside native width.
+  // registered field sprites rendered beyond native width, without clipping their edges.
   const bool fieldParticlesEnabled = !isSub && s_FieldViewWidth > SIM_NDS_SCREEN_WIDTH
-                                     && G2SIM_HasFieldTiledSprites();
+                                     && G2SIM_HasFieldSprites();
   if (fieldParticlesEnabled) {
     glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
     glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
     for (int priority = 0; priority < 4; priority++) {
       memset(s_FieldParticlesPixels, 0, sizeof(s_FieldParticlesPixels));
       for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
-        memset(OBJLine, 0, sizeof(OBJLine));
-        memset(OBJWindow, 0, sizeof(OBJWindow));
+        memset(s_FieldSpriteLine, 0, sizeof(u32) * SIM_FIELD_SPRITE_WIDTH);
         G2SIM_DrawOBJ(line, FALSE, priority << 10, TRUE);
-        for (int x = 0; x < SIM_NDS_SCREEN_WIDTH; x++) {
-          const u8 index = OBJLine[0][x] & 0xFF;
+        for (int x = 0; x < SIM_FIELD_SPRITE_WIDTH; x++) {
+          const u8 index = s_FieldSpriteLine[x] & 0xFF;
           if (index) {
             u8 r, g, b;
             SIM_u16ToRGB(((u16 *)s_HW_OBJ_PLTT)[index], &r, &g, &b);
-            G2SIM_PlotPixel(s_FieldParticlesPixels, r, g, b, x, line, FALSE);
+            const int row = (s_reg_GX_POWCNT >> 15) ? 383 - line : 191 - line;
+            u8 *pixel = s_FieldParticlesPixels + 4 * (row * SIM_FIELD_SPRITE_WIDTH + x);
+            pixel[0] = r; pixel[1] = g; pixel[2] = b; pixel[3] = 255;
           }
         }
       }
       glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, priority,
-                     SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT * 2, 1,
+                     SIM_FIELD_SPRITE_WIDTH, SIM_NDS_SCREEN_HEIGHT * 2, 1,
                      GL_RGBA, GL_UNSIGNED_BYTE, s_FieldParticlesPixels);
     }
   }

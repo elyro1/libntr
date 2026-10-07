@@ -65,7 +65,7 @@ vec4 sampleBg(int layer) {
 vec4 sampleObj(int layer) {
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) {
         if (fieldParticlesEnabled && fieldWidth > 256.0 && bg0as3d != 0 && layer < 4)
-            return texture(fieldParticlesTexture, vec3(uiCoord, float(layer)));
+            return texture(fieldParticlesTexture, vec3(worldCoord, float(layer)));
         return vec4(0.0);
     }
     return texture(objTexture[layer], uiCoord);

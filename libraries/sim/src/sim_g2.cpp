@@ -251,30 +251,42 @@ void G2SIM_DrawBG(u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub) {
 #endif
 }
 
-static struct { u32 address; u32 size; } s_FieldTiledSpriteRanges[4];
+static struct { u32 address; u32 size; BOOL repeat; } s_FieldSpriteRanges[16];
+static BOOL s_FieldSpriteDraw = FALSE;
+u32 s_FieldSpriteLine[SIM_FIELD_SPRITE_WIDTH];
+static u8 s_FieldSpriteWindow[SIM_FIELD_SPRITE_WIDTH];
 
-void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled) {
-  for (auto &range : s_FieldTiledSpriteRanges) {
+static void SetFieldSpriteRange(u32 address, u32 size, BOOL enabled, BOOL repeat) {
+  for (auto &range : s_FieldSpriteRanges) {
     if (range.size && range.address == address) {
       range.size = enabled ? size : 0;
+      range.repeat = repeat;
       return;
     }
   }
   if (enabled) {
-    for (auto &range : s_FieldTiledSpriteRanges) {
-      if (!range.size) { range.address = address; range.size = size; return; }
+    for (auto &range : s_FieldSpriteRanges) {
+      if (!range.size) { range.address = address; range.size = size; range.repeat = repeat; return; }
     }
   }
 }
 
-BOOL G2SIM_HasFieldTiledSprites(void) {
-  for (const auto &range : s_FieldTiledSpriteRanges) {
+void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled) {
+  SetFieldSpriteRange(address, size, enabled, TRUE);
+}
+
+void SIM_SetFieldWideSpriteRange(u32 address, u32 size, BOOL enabled) {
+  SetFieldSpriteRange(address, size, enabled, FALSE);
+}
+
+BOOL G2SIM_HasFieldSprites(void) {
+  for (const auto &range : s_FieldSpriteRanges) {
     if (range.size) return TRUE;
   }
   return FALSE;
 }
 
-void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL tiledOnly) {
+void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
   u32 dispcnt;
   u16 *oam;
   u8 *pixelBuf;
@@ -310,19 +322,23 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL tiledOnly) {
 #ifdef SDK_TRACY_ENABLE
   TracyCZone(ctx, 1);
 #endif
+  s_FieldSpriteDraw = fieldOnly;
   for (int sprnum = 127; sprnum >= 0; sprnum--) {
     u16 *attrib = &oam[sprnum * 4];
 
     if ((attrib[2] & 0x0C00) != bgnum) {
       continue;
     }
-    if (tiledOnly) {
+    BOOL repeat = FALSE;
+    if (fieldOnly) {
       if (isSub || !(dispcnt & 0x10)) continue;
       const u32 address = (attrib[2] & 0x03FF) << (5 + ((dispcnt >> 20) & 3));
       bool tiled = false;
-      for (const auto &range : s_FieldTiledSpriteRanges) {
-        if (range.size && address >= range.address && address - range.address < range.size)
+      for (const auto &range : s_FieldSpriteRanges) {
+        if (range.size && address >= range.address && address - range.address < range.size) {
           tiled = true;
+          repeat = range.repeat;
+        }
       }
       if (!tiled) continue;
     }
@@ -353,14 +369,17 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL tiledOnly) {
       ypos = (sprline - ypos) & 0xFF;
 
       s32 xpos = (s32)(attrib[1] << 23) >> 23;
-      if (xpos <= -boundwidth) {
-        continue;
+      // OAM X wraps at 512. Recover a cloud on the right when its signed
+      // representation lies completely beyond the widened left edge.
+      if (fieldOnly && !repeat && xpos + boundwidth <= -(SIM_FIELD_SPRITE_WIDTH - 256) / 2)
+        xpos += 512;
+      const int copies = fieldOnly && repeat ? 1 : 0;
+      for (int copy = -copies; copy <= copies; copy++) {
+        s32 drawX = xpos + (fieldOnly ? (SIM_FIELD_SPRITE_WIDTH - 256) / 2 + copy * 256 : 0);
+        if (drawX <= -boundwidth || drawX >= (fieldOnly ? SIM_FIELD_SPRITE_WIDTH : 256)) continue;
+        DrawOBJ_RotScale(sprnum, boundwidth, boundheight, width, height, drawX,
+                        ypos, isSub, iswin);
       }
-
-      u32 rotparamgroup = (attrib[1] >> 9) & 0x1F;
-
-      DrawOBJ_RotScale(sprnum, boundwidth, boundheight, width, height, xpos,
-                       ypos, isSub, iswin);
     } else {
       if (attrib[0] & 0x0200) {
         continue;
@@ -377,13 +396,17 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL tiledOnly) {
       ypos = (sprline - ypos) & 0xFF;
 
       s32 xpos = (s32)(attrib[1] << 23) >> 23;
-      if (xpos <= -width) {
-        continue;
+      if (fieldOnly && !repeat && xpos + width <= -(SIM_FIELD_SPRITE_WIDTH - 256) / 2)
+        xpos += 512;
+      const int copies = fieldOnly && repeat ? 1 : 0;
+      for (int copy = -copies; copy <= copies; copy++) {
+        s32 drawX = xpos + (fieldOnly ? (SIM_FIELD_SPRITE_WIDTH - 256) / 2 + copy * 256 : 0);
+        if (drawX <= -width || drawX >= (fieldOnly ? SIM_FIELD_SPRITE_WIDTH : 256)) continue;
+        DrawOBJ_Normal(sprnum, width, height, drawX, ypos, isSub, iswin);
       }
-
-      DrawOBJ_Normal(sprnum, width, height, xpos, ypos, isSub, iswin);
     }
   }
+  s_FieldSpriteDraw = FALSE;
 #ifdef SDK_TRACY_ENABLE
   TracyCZoneEnd(ctx);
 #endif
@@ -1375,8 +1398,9 @@ static void DrawOBJ_RotScale(u32 num, u32 boundwidth, u32 boundheight,
 
   u32 ytilefactor;
 
-  u32 *objLine = OBJLine[isSub];
-  u8 *objWindow = OBJWindow[isSub];
+  u32 *objLine = s_FieldSpriteDraw ? s_FieldSpriteLine : OBJLine[isSub];
+  u8 *objWindow = s_FieldSpriteDraw ? s_FieldSpriteWindow : OBJWindow[isSub];
+  const u32 lineWidth = s_FieldSpriteDraw ? SIM_FIELD_SPRITE_WIDTH : 256;
 
   s32 centerX = boundwidth >> 1;
   s32 centerY = boundheight >> 1;
@@ -1388,8 +1412,8 @@ static void DrawOBJ_RotScale(u32 num, u32 boundwidth, u32 boundheight,
   u32 xoff;
   if (xpos >= 0) {
     xoff = 0;
-    if ((xpos + boundwidth) > 256)
-      boundwidth = 256 - xpos;
+    if ((xpos + boundwidth) > lineWidth)
+      boundwidth = lineWidth - xpos;
   } else {
     xoff = -xpos;
     xpos = 0;
@@ -1590,8 +1614,9 @@ static void DrawOBJ_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos,
     pixelattr |= 0x100000;
   }
 
-  u32 *objLine = OBJLine[isSub];
-  u8 *objWindow = OBJWindow[isSub];
+  u32 *objLine = s_FieldSpriteDraw ? s_FieldSpriteLine : OBJLine[isSub];
+  u8 *objWindow = s_FieldSpriteDraw ? s_FieldSpriteWindow : OBJWindow[isSub];
+  const u32 lineWidth = s_FieldSpriteDraw ? SIM_FIELD_SPRITE_WIDTH : 256;
 
   if (attrib[1] & 0x2000) {
     ypos = height - 1 - ypos;
@@ -1601,8 +1626,8 @@ static void DrawOBJ_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos,
   u32 xend = width;
   if (xpos >= 0) {
     xoff = 0;
-    if ((xpos + xend) > 256)
-      xend = 256 - xpos;
+    if ((xpos + xend) > lineWidth)
+      xend = lineWidth - xpos;
   } else {
     xoff = -xpos;
     xpos = 0;
