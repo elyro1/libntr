@@ -10,6 +10,9 @@
 #include <SDL2/SDL.h>
 
 #include <stdlib.h>
+#include <math.h>
+#include <errno.h>
+#include <ctype.h>
 
 #define SIM_CONFIG_FILE_PATH "./sim_config.ini"
 
@@ -49,6 +52,15 @@ static int IniHandler(void* user, const char* section, const char* name,
     }
     if(MATCH("General", "CapFrameRate")) {
         config->capFrameRate = StringToBool(value);
+    }
+    if(MATCH("General", "FastForwardMultiplier")) {
+        char *end;
+        errno = 0;
+        float multiplier = strtof(value, &end);
+        BOOL parsed = end != value;
+        while (isspace((unsigned char)*end)) ++end;
+        config->fastForwardMultiplier = (!parsed || *end || errno)
+            ? 5.0f : SIM_Config_ValidateFastForwardMultiplier(multiplier);
     }
 
     if(MATCH("General", "MacAddr")) {
@@ -326,6 +338,14 @@ BOOL SIM_Config_LoadConfigFile(SIM_config_type * aConfig)
 }
 
 // Initialize a SIM_config_type to default values
+float SIM_Config_ValidateFastForwardMultiplier(float multiplier)
+{
+    if (!isfinite(multiplier)) return 5.0f;
+    if (multiplier < 1.0f) return 1.0f;
+    if (multiplier > 10.0f) return 10.0f;
+    return multiplier;
+}
+
 void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
 {
 #ifdef SDK_BUILD_NX
@@ -341,6 +361,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->swapScreens = FALSE;
     aConfig->vsyncInterval = 1;
     aConfig->capFrameRate = TRUE;
+    aConfig->fastForwardMultiplier = 5.0f;
 
     aConfig->padSettings.joyAxisDeadzone = 32767 / 4;
     aConfig->padSettings.aKey = SDLK_z;
@@ -417,6 +438,8 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     fprintf(configFile, "SwapScreens=%s\n", BoolToString(aConfig->swapScreens));
     fprintf(configFile, "VsyncInterval=%d\n", aConfig->vsyncInterval);
     fprintf(configFile, "CapFrameRate=%s\n", BoolToString(aConfig->capFrameRate));
+    fprintf(configFile, "FastForwardMultiplier=%.6g\n",
+        SIM_Config_ValidateFastForwardMultiplier(aConfig->fastForwardMultiplier));
     fprintf(configFile, "MacAddr=%02x%02x%02x%02x%02x%02x\n", aConfig->macAddr[0],
                                                               aConfig->macAddr[1],
                                                               aConfig->macAddr[2],

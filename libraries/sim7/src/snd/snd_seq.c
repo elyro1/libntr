@@ -1,4 +1,5 @@
 #include <nitro/snd/common/seq.h>
+#include <simulator/sim_audio.h>
 
 #include <nitro/snd/common/work.h>
 #include <nitro/snd/common/mml.h>
@@ -159,6 +160,11 @@ void SND_SeqInit(void)
 
 void SND_SeqMain(BOOL doPeriodicProc)
 {
+    SND_SeqMainMask(doPeriodicProc, 0xffff);
+}
+
+void SND_SeqMainMask(BOOL doPeriodicProc, u32 playerMask)
+{
     SNDPlayer *player_p;
     int     playerNo;
     u32     playerStatus = 0;
@@ -169,6 +175,12 @@ void SND_SeqMain(BOOL doPeriodicProc)
 
         if (!player_p->active_flag)
             continue;
+
+        if (!(playerMask & (1u << playerNo)))
+        {
+            playerStatus |= (1u << playerNo);
+            continue;
+        }
 
         if (player_p->prepared_flag)
         {
@@ -1025,6 +1037,8 @@ static void NoteOnCommandProc(SNDTrack *track_p,
         if (ch_p == NULL)
             return;
 
+        SIM_Audio_InheritChannelFastForward(ch_p->myNo, player_p->myNo);
+
         if (!SND_NoteOn(ch_p,
                         key, velocity, track_p->tie_flag ? -1 : length, player_p->bank, &inst))
         {
@@ -1676,4 +1690,3 @@ static void SetTrackMute(SNDTrack *track_p, SNDPlayer *player_p, SNDSeqMute mute
         break;
     }
 }
-

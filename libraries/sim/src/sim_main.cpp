@@ -158,7 +158,7 @@ extern "C" u32 SIM_DecodeTextureAddress(u32 *parameter) {
 #endif
 
 static constexpr u64 sNormalFrameBudgetNs = 16600000;
-static constexpr u64 sFastForwardMultiplier = 5;
+static float sEffectiveSpeed = 1.0f;
 
 static void UpdateFastForward(SDL_Window *gameWindow) {
   const Uint8 *keys = SDL_GetKeyboardState(nullptr);
@@ -166,6 +166,10 @@ static void UpdateFastForward(SDL_Window *gameWindow) {
                        !ImGui::GetIO().WantCaptureKeyboard &&
                        !SIM::GUI::IsGameLogicPaused() &&
                        keys[SDL_SCANCODE_SPACE];
+  sEffectiveSpeed = sFastForwardActive
+      ? SIM_Config_ValidateFastForwardMultiplier(s_SIM_config.fastForwardMultiplier)
+      : 1.0f;
+  SIM_Audio_SetFastForwardMultiplier(sEffectiveSpeed);
 
   // Override VSync only while speeding up; keep the saved setting intact.
   const int swapInterval = sFastForwardActive ? 0 : s_SIM_config.vsyncInterval;
@@ -1644,10 +1648,10 @@ void *SIM_Render(void *arg) {
 #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(SimRenderZone);
 #endif
-    // Advance the entire game at 5x while Space is held, including VBlank tasks.
+    // Advance game frames and VBlank tasks at the configured Space-held speed.
     if (sFastForwardActive || s_SIM_config.capFrameRate) {
       const u64 frameBudgetNs = sFastForwardActive
-                                   ? sNormalFrameBudgetNs / sFastForwardMultiplier
+                                   ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)
                                    : sNormalFrameBudgetNs;
       WaitForFrameBudget(frameNs, frameBudgetNs);
     }

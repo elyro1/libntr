@@ -58,6 +58,7 @@ typedef struct {
     BOOL swapScreens; /* Swap screen positions */
     u8 vsyncInterval; /* Vertical sync interval. Set to 0 to disable vsync, 1 every vblank, 2 every second vblank etc*/
     u8 capFrameRate; /* Should the frame rate be capped to 60 fps? */
+    float fastForwardMultiplier; /* Space-held speed, from 1x to 10x. */
     u8 macAddr[6]; /* MAC address */
     SIM_config_pad_settings_type padSettings; /* Input pad settings */
     NVRAMConfig osNvramConfig; /* OS NVRAM config */
@@ -69,6 +70,7 @@ extern "C" {
 #endif
 
 BOOL SIM_Config_LoadConfigFile(SIM_config_type * aConfig);
+float SIM_Config_ValidateFastForwardMultiplier(float multiplier);
 void SIM_Config_LoadDefaults(SIM_config_type * aConfig);
 void SIM_Config_SaveConfigFile(SIM_config_type * aConfig);
 void SIM_Config_SetOSNVRAMConfig(SIM_config_type * aConfig);

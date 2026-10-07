@@ -4,6 +4,9 @@
 #include <nitro/snd/common/command.h>
 #include <nitro/snd/common/seq.h>
 #include <nitro/snd/common/alarm.h>
+#ifdef SDK_PORT
+#include <simulator/sim_audio.h>
+#endif
 
 #ifdef SDK_PORT
 #define PushCommand(c, a0, a1, a2, a3) PushCommand_impl((c), (u64)(a0), (u64)(a1), (u64)(a2), (u64)(a3))
@@ -28,6 +31,20 @@ void SND_StartSeq (int playerNo, const void * base, u32 offset, const struct SND
 
     PushCommand(SND_COMMAND_START_SEQ, playerNo, base, offset, bank);
 }
+
+#ifdef SDK_PORT
+void SIM_Audio_SetPlayerFastForward(int playerNo, BOOL enabled)
+{
+    SDK_MINMAX_ASSERT(playerNo, SND_PLAYER_MIN, SND_PLAYER_MAX);
+    PushCommand(SND_COMMAND_SIM_AUDIO_TIMING, 0, playerNo, enabled, 0);
+}
+
+void SIM_Audio_SetChannelFastForward(int chNo, BOOL enabled)
+{
+    SDK_MINMAX_ASSERT(chNo, SND_CHANNEL_MIN, SND_CHANNEL_MAX);
+    PushCommand(SND_COMMAND_SIM_AUDIO_TIMING, 1, chNo, enabled, 0);
+}
+#endif
 
 void SND_StopSeq (int playerNo)
 {

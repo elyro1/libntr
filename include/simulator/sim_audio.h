@@ -19,6 +19,18 @@ extern u32 s_SIM_sndlen[16];
 void SIM_Audio_Init(int aAudioFrequency);
 void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len);
 
+// Main-thread speed publication. The callback snapshots it atomically.
+void SIM_Audio_SetFastForwardMultiplier(float multiplier);
+// Queue timing ownership alongside the usual sound commands.
+void SIM_Audio_SetPlayerFastForward(int playerNo, BOOL enabled);
+void SIM_Audio_SetChannelFastForward(int chNo, BOOL enabled);
+// Sound-worker/callback only: ownership survives detached release tails.
+void SIM_Audio_ApplyPlayerFastForward(int playerNo, BOOL enabled);
+void SIM_Audio_ApplyChannelFastForward(int chNo, BOOL enabled);
+void SIM_Audio_InheritChannelFastForward(int chNo, int playerNo);
+BOOL SIM_Audio_IsPlayerFastForward(int playerNo);
+BOOL SIM_Audio_IsChannelFastForward(int chNo);
+
 void SIM_Audio_StartChannel(int chNo);
 
 s32 SIM_Audio_RunChannel(u32 cycles, int chNo);

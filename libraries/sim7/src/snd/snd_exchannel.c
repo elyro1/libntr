@@ -1,4 +1,5 @@
 #include <nitro/snd/common/exchannel.h>
+#include <simulator/sim_audio.h>
 
 #include <nitro/snd/common/util.h>
 #include <nitro/snd/common/work.h>
@@ -152,6 +153,11 @@ void SND_UpdateExChannel(void)
 
 void SND_ExChannelMain(BOOL doPeriodicProc)
 {
+    SND_ExChannelMainMask(doPeriodicProc, 0xffff);
+}
+
+void SND_ExChannelMainMask(BOOL doPeriodicProc, u32 channelMask)
+{
     SNDExChannel *ch_p;
     int     ch;
 
@@ -162,6 +168,9 @@ void SND_ExChannelMain(BOOL doPeriodicProc)
         s32     pan = 0;
 
         ch_p = &SNDi_Work.channel[ch];
+
+        if (!(channelMask & (1u << ch)))
+            continue;
 
         if (!ch_p->active_flag)
             continue;
@@ -496,6 +505,8 @@ SNDExChannel *SND_AllocExChannel(u32 chBitMask,
     ch_p->sync_flag = SND_EX_CHANNEL_UPDATE_STOP;
     ch_p->active_flag = FALSE;
 
+    // New owners default to normal timing; sequence allocation then inherits its policy.
+    SIM_Audio_ApplyChannelFastForward(ch_p->myNo, FALSE);
     InitAllocExChannel(ch_p, callback, callbackData, prio);
 
     return ch_p;
@@ -830,4 +841,3 @@ static s32 LfoMain(SNDExChannel *ch_p, BOOL doPeriodicProc)
 
     return (s32)lfo_value;
 }
-

@@ -136,6 +136,12 @@ typedef struct SNDExChannel {
     void SND_ExChannelInit(void);
     void SND_ExChannelMain(BOOL doPeriodicProc);
     void SND_UpdateExChannel(void);
+#ifdef SDK_PORT
+    void SND_ExChannelMainMask(BOOL doPeriodicProc, u32 channelMask);
+    void SND_LockChannel7(u32 chBitMask, u32 flags);
+    void SND_UnlockChannel7(u32 chBitMask, u32 flags);
+    void SND_StopUnlockedChannel7(u32 chBitMask, u32 flags);
+#endif
 
     struct SNDExChannel * SND_AllocExChannel(u32 chBitMask,
                                             int prio,

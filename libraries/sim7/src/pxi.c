@@ -78,9 +78,18 @@ void SIM_procPXI(void)
 					{
 						break;
 					}
+                    // Commands and synthesis share players, channels and decoder state.
+                    SDL_LockAudio();
 					while( sndCommandList != NULL ){
-						switch( sndCommandList->id )
-						{
+							switch( sndCommandList->id )
+							{
+                            case SND_COMMAND_SIM_AUDIO_TIMING:
+                                if (sndCommandList->arg[0] == 0) {
+                                    SIM_Audio_ApplyPlayerFastForward(sndCommandList->arg[1], sndCommandList->arg[2]);
+                                } else {
+                                    SIM_Audio_ApplyChannelFastForward(sndCommandList->arg[1], sndCommandList->arg[2]);
+                                }
+                                break;
 							case SND_COMMAND_START_SEQ:
 								{
 
@@ -88,6 +97,8 @@ void SIM_procPXI(void)
 									u64 sseqDataPtr = sndCommandList->arg[1];
 									u32 sseqDataOffset = sndCommandList->arg[2];
 									u64 waveBankPtr = sndCommandList->arg[3];
+
+                                    SND_StartSeq7(playerNum, (void *)sseqDataPtr, sseqDataOffset, (void *)waveBankPtr);
 								}
 
             				    break;
@@ -166,6 +177,7 @@ void SIM_procPXI(void)
 										if( (sndCommandList->arg[0] >> i) & 1 )
 										{
 											channelsEnabled[i] = 1;
+                                        if (i < SND_CHANNEL_NUM) SND_StartChannel7(i);
 										}
 									}
 
@@ -211,7 +223,8 @@ void SIM_procPXI(void)
 									if( (sndCommandList->arg[0] >> i) & 1 )
 									{
 										channelsEnabled[i] = 1;
-										win_snd_channels[i].audio_len = 0;
+										if (i < SND_CHANNEL_NUM) SND_StopChannel7(i, 0);
+                                    win_snd_channels[i].audio_len = 0;
 										win_snd_channels[i].total_audio_len = 0;
 										win_snd_channel_bufs[i] = NULL;
 									}
@@ -241,27 +254,28 @@ void SIM_procPXI(void)
             				    break;
 
             				case SND_COMMAND_CHANNEL_TIMER:
-
-            				    break;
-
-            				case SND_COMMAND_CHANNEL_VOLUME:
-
-            				    break;
-
-            				case SND_COMMAND_CHANNEL_PAN:
-
-            				    break;
-
-            				case SND_COMMAND_SETUP_CHANNEL_PCM:
-								{
-
-									
-
-								}
-
-            				    break;
-
-            				case SND_COMMAND_SETUP_CHANNEL_PSG:
+                            case SND_COMMAND_CHANNEL_VOLUME:
+                            case SND_COMMAND_CHANNEL_PAN:
+                                for (int ch = 0; ch < SND_CHANNEL_NUM; ++ch) {
+                                    if (!(sndCommandList->arg[0] & (1u << ch))) continue;
+                                    if (sndCommandList->id == SND_COMMAND_CHANNEL_TIMER)
+                                        SND_SetChannelTimer7(ch, sndCommandList->arg[1]);
+                                    else if (sndCommandList->id == SND_COMMAND_CHANNEL_VOLUME)
+                                        SND_SetChannelVolume7(ch, sndCommandList->arg[1], sndCommandList->arg[2]);
+                                    else
+                                        SND_SetChannelPan7(ch, sndCommandList->arg[1]);
+                                }
+                                break;
+                            case SND_COMMAND_SETUP_CHANNEL_PCM: {
+                                const u64 *arg = sndCommandList->arg;
+                                SND_SetupChannelPcm7(arg[0] & 0xffff, (const void *)arg[1],
+                                    (arg[3] >> 24) & 3, (arg[3] >> 26) & 3,
+                                    arg[3] & 0xffff, arg[2] & 0x3fffff,
+                                    (arg[2] >> 24) & 127, (arg[2] >> 22) & 3,
+                                    (arg[0] >> 16) & 0xffff, (arg[3] >> 16) & 127);
+                                break;
+                            }
+                            case SND_COMMAND_SETUP_CHANNEL_PSG:
             				    break;
 
             				case SND_COMMAND_SETUP_CHANNEL_NOISE:
@@ -280,12 +294,15 @@ void SIM_procPXI(void)
             				    break;
 
             				case SND_COMMAND_LOCK_CHANNEL:
+                                SND_LockChannel7(sndCommandList->arg[0], sndCommandList->arg[1]);
             				    break;
 
             				case SND_COMMAND_UNLOCK_CHANNEL:
+                                SND_UnlockChannel7(sndCommandList->arg[0], sndCommandList->arg[1]);
             				    break;
 
             				case SND_COMMAND_STOP_UNLOCKED_CHANNEL:
+                                SND_StopUnlockedChannel7(sndCommandList->arg[0], sndCommandList->arg[1]);
             				    break;
 
             				case SND_COMMAND_INVALIDATE_SEQ:
@@ -308,6 +325,14 @@ void SIM_procPXI(void)
 						}
 						sndCommandList = sndCommandList->next;
 					} 
+                    if (SNDi_SharedWork) {
+                        u16 status = 0;
+                        for (int ch = 0; ch < SND_CHANNEL_NUM; ++ch) {
+                            if (SND_IsChannelActive7(ch)) status |= 1u << ch;
+                        }
+                        SNDi_SharedWork->channelStatus = status;
+                    }
+                    SDL_UnlockAudio();
 						if( win_SNDi_SharedWork )
 						{
 							win_SNDi_SharedWork->finishCommandTag++;

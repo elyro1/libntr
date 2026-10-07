@@ -119,6 +119,7 @@ typedef struct SNDTrack {
 #ifdef SDK_PORT
     void SND_SeqInit(void);
     void SND_SeqMain(BOOL doPeriodicProc);
+    void SND_SeqMainMask(BOOL doPeriodicProc, u32 playerMask);
 
     void SND_StartSeq7(int playerNo, const void *seqBase, u32 seqOffset, struct SNDBankData *bank_p);
     void SND_StopSeq7(int playerNo);

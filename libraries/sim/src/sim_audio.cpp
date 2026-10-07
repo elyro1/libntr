@@ -3,6 +3,10 @@
 #include <simulator/sim.h>
 #include <simulator/config/sim_config.h>
 #include <SDL2/SDL.h>
+#include <atomic>
+#include <cmath>
+#include <nitro/snd/common/main.h>
+#include <nitro/snd/common/work.h>
 
 #include "blip_buf.h"
 
@@ -72,6 +76,65 @@ static const s16 s_PSGTable[8][8] =
 
 #define INTERNAL_SAMPLE_RATE 16756991.f
 
+static std::atomic<float> s_fastForwardMultiplier{1.0f};
+static BOOL s_playerFastForward[16] = {};
+static BOOL s_channelFastForward[16] = {};
+static double s_channelCycleFraction[16] = {};
+// OS ticks use a /64 CPU clock; channel clocks use /2.
+static constexpr double s_soundTickCycles = SND_PROC_INTERVAL * 32.0;
+static double s_tickRemaining[2] = {};
+
+void SIM_Audio_SetFastForwardMultiplier(float multiplier)
+{
+    s_fastForwardMultiplier.store(SIM_Config_ValidateFastForwardMultiplier(multiplier),
+                                  std::memory_order_relaxed);
+}
+
+void SIM_Audio_ApplyPlayerFastForward(int playerNo, BOOL enabled)
+{
+    if (playerNo >= 0 && playerNo < 16) s_playerFastForward[playerNo] = !!enabled;
+}
+
+void SIM_Audio_ApplyChannelFastForward(int chNo, BOOL enabled)
+{
+    if (chNo >= 0 && chNo < 16) {
+        s_channelFastForward[chNo] = !!enabled;
+        s_channelCycleFraction[chNo] = 0;
+    }
+}
+
+BOOL SIM_Audio_IsPlayerFastForward(int playerNo)
+{
+    return s_playerFastForward[playerNo];
+}
+
+BOOL SIM_Audio_IsChannelFastForward(int chNo)
+{
+    return s_channelFastForward[chNo];
+}
+
+void SIM_Audio_InheritChannelFastForward(int chNo, int playerNo)
+{
+    SIM_Audio_ApplyChannelFastForward(chNo, s_playerFastForward[playerNo]);
+}
+
+static void RunSoundTick(BOOL accelerated)
+{
+    u32 playerMask = 0;
+    for (int player = 0; player < 16; ++player) {
+        if (s_playerFastForward[player] == accelerated) playerMask |= 1u << player;
+    }
+    SND_SeqMainMask(TRUE, playerMask);
+    // Note allocation above may have changed ownership of a stolen channel.
+    u32 channelMask = 0;
+    for (int channel = 0; channel < 16; ++channel) {
+        if (s_channelFastForward[channel] == accelerated) channelMask |= 1u << channel;
+    }
+    SND_ExChannelMainMask(TRUE, channelMask);
+    SND_UpdateExChannel();
+}
+
+
 
 void SIM_Audio_Init(int aAudioFrequency)
 {
@@ -106,60 +169,53 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
     #ifdef SDK_TRACY_ENABLE
     TracyCZone(ctx, 1);
     #endif
-    // Run NitroComposer
-    SND_UpdateExChannel();
-    SND_SeqMain(TRUE);
-    SND_ExChannelMain(TRUE);
+    const double multiplier = s_fastForwardMultiplier.load(std::memory_order_relaxed);
+    // Fixed output clock; music and effects advance independently before mixing.
+    while (blip_samples_avail(s_BlipLeft) < len / 4) {
+        for (int clock = 0; clock < 2; ++clock) {
+            while (s_tickRemaining[clock] <= 0.0) {
+                RunSoundTick(clock == 1);
+                s_tickRemaining[clock] += s_soundTickCycles;
+            }
+        }
+        u32 cycles = 512;
+        const double untilTick = std::fmin(s_tickRemaining[0], s_tickRemaining[1] / multiplier);
+        if (untilTick < cycles) cycles = (u32)std::ceil(untilTick);
 
-    // get samples from each channel and do the thing
-    
-
-    while(blip_samples_avail(s_BlipLeft) < len / 4) {
         s32 left = 0;
         s32 right = 0;
-        s32 leftOutput = 0;
-        s32 rightOutput = 0;
-
-        s32 ch0 = SIM_Audio_RunChannel(512, 0);
-        s32 ch1 = SIM_Audio_RunChannel(512, 1);
-        s32 ch2 = SIM_Audio_RunChannel(512, 2);
-        s32 ch3 = SIM_Audio_RunChannel(512, 3);
-
-        // hack for now
-        PanOutput(ch0, &left, &right, 0);
-        PanOutput(ch1, &left, &right, 1);
-        PanOutput(ch2, &left, &right, 2);
-        PanOutput(ch3, &left, &right, 3);
-        //left += ch0;
-        //left += ch1;
-        //left += ch2;
-        //left += ch3;
-
-        // pan output
-
-        for(int chNo = 4; chNo < 16; chNo++) {
-            s32 channel = SIM_Audio_RunChannel(512, chNo);
-            PanOutput(channel, &left, &right, chNo);
+        for (int chNo = 0; chNo < 16; ++chNo) {
+            const double channelCycles = cycles * (s_channelFastForward[chNo] ? multiplier : 1.0)
+                                         + s_channelCycleFraction[chNo];
+            const u32 wholeCycles = (u32)channelCycles;
+            s_channelCycleFraction[chNo] = channelCycles - wholeCycles;
+            PanOutput(SIM_Audio_RunChannel(wholeCycles, chNo), &left, &right, chNo);
         }
+        s_tickRemaining[0] -= cycles;
+        s_tickRemaining[1] -= cycles * multiplier;
 
+        // Preserve the simulator's existing mono presentation.
         right = left;
-        s_blipTimer += 512;
-
-        if(left != 0) {
-            blip_add_delta(s_BlipLeft, s_blipTimer, left - s_outputLastLeftSample);
-        }
-        if(right != 0) {
-            blip_add_delta(s_BlipRight, s_blipTimer, right - s_outputLastRightSample);
-        }
-
+        s_blipTimer += cycles;
+        // Also emit the transition back to zero when the last channel stops.
+        blip_add_delta(s_BlipLeft, s_blipTimer, left - s_outputLastLeftSample);
+        blip_add_delta(s_BlipRight, s_blipTimer, right - s_outputLastRightSample);
         s_outputLastLeftSample = left;
         s_outputLastRightSample = right;
 
-        if(s_blipTimer >= 512 * 128) {
+        if (s_blipTimer >= 4096) {
             blip_end_frame(s_BlipLeft, s_blipTimer);
             blip_end_frame(s_BlipRight, s_blipTimer);
             s_blipTimer = 0;
         }
+    }
+
+    if (SNDi_SharedWork) {
+        u16 channelStatus = 0;
+        for (int channel = 0; channel < 16; ++channel) {
+            if (s_SIM_sndcnt[channel] & (1u << 31)) channelStatus |= 1u << channel;
+        }
+        SNDi_SharedWork->channelStatus = channelStatus;
     }
 
     int avail = blip_samples_avail(s_BlipLeft);
@@ -176,11 +232,12 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
 
 void SIM_Audio_StartChannel(int chNo)
 {
-    if((s_SIM_sndcnt[chNo]>>29)&0x3 == 3) {
+    if (((s_SIM_sndcnt[chNo] >> 29) & 0x3) == 3) {
         s_SIM_internalSoundPos[chNo] = -1;
     } else {
         s_SIM_internalSoundPos[chNo] = -3;
     }
+    s_channelCycleFraction[chNo] = 0;
     s_SIM_internalSoundSample[chNo] = 0;
     s_SIM_internalSoundTimer[chNo] = s_SIM_sndtmr[chNo];
     s_SIM_internalNoiseVal[chNo] = 0x7FFF;

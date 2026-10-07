@@ -38,6 +38,7 @@ void AppConfigMain(bool *openState) {
     bool swapScreens = sConfig->swapScreens;
     int vSyncInterval = sConfig->vsyncInterval;
     bool frameLimit = sConfig->capFrameRate;
+    float fastForwardMultiplier = sConfig->fastForwardMultiplier;
     
     ImGui::Begin("Config", openState);
 
@@ -56,6 +57,10 @@ void AppConfigMain(bool *openState) {
     if(ImGui::Checkbox("Cap framerate", &frameLimit)) {
         configChanged = true;
     }
+    if (ImGui::SliderFloat("Fast-forward speed", &fastForwardMultiplier, 1.0f, 10.0f, "%.2fx")) {
+        configChanged = true;
+    }
+    ImGui::TextWrapped("Hold Space to speed up the game and sound effects. Background music keeps its normal speed.");
 
     ImGui::End();
 
@@ -67,6 +72,7 @@ void AppConfigMain(bool *openState) {
             SDL_GL_SetSwapInterval(vSyncInterval);
         }
         sConfig->capFrameRate = frameLimit;
+        sConfig->fastForwardMultiplier = SIM_Config_ValidateFastForwardMultiplier(fastForwardMultiplier);
 
         SIM_Config_SaveConfigFile(sConfig);
     }

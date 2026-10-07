@@ -29,3 +29,22 @@ libntr supports building TWL applications. Set the meson options:
  * hardware_type=(twl_hyb) or (twl_ltd)
  * * twl_hyb: DSi enhanced application, supports running on original NDS and DSi
  * * twl_ltd: DSiWare, DSi only
+
+## Simulator fast-forward
+
+Hold Space in the game window to use the speed configured in Config →
+Fast-forward speed. `[General] FastForwardMultiplier` in `sim_config.ini`
+accepts 1–10 (including fractional values); the default is 5. Missing or invalid
+values use the default, and numeric values outside the range are clamped.
+Keyboard capture, focus loss, and game-logic pause return playback to 1×.
+
+Games opt sound players into accelerated timing with the simulator-only
+`NNS_SndPlayerSetFastForward(logicalPlayerNo, enabled)` bridge in libntrsystem.
+It transfers the policy to each allocated runtime player through queued libntr
+sound commands. Direct wave playback can use
+`SIM_Audio_SetChannelFastForward(channelNo, enabled)` before its start command.
+Unclassified players and channels retain normal speed. Ownership persists on
+released notes and changes when a channel is allocated to another player.
+Accelerated sounds increase pitch as well as tempo; music can remain at normal
+speed by leaving its logical player unclassified. The multiplier is a target
+rate; reaching it depends on rendering and audio workload.
