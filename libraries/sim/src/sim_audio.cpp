@@ -5,6 +5,9 @@
 #include <SDL2/SDL.h>
 #include <atomic>
 #include <cmath>
+#include <algorithm>
+#include <type_traits>
+#include <SoundTouch.h>
 #include <nitro/snd/common/main.h>
 #include <nitro/snd/common/work.h>
 
@@ -84,6 +87,62 @@ static double s_channelCycleFraction[16] = {};
 static constexpr double s_soundTickCycles = SND_PROC_INTERVAL * 32.0;
 static double s_tickRemaining[2] = {};
 
+// Effects are synthesized at their original pitch on the accelerated clock.
+// SoundTouch shortens that separate stream before it is mixed with normal music.
+static blip_t *s_effectBlip;
+static soundtouch::SoundTouch s_effectTempo;
+static int s_effectBlipTimer;
+static double s_effectClockFraction;
+static int s_effectLastSample;
+static float s_effectTempoMultiplier;
+static bool s_effectOutputPrimed;
+static int s_effectTransitionFrames;
+static int s_effectTransitionRemaining;
+static double s_effectTransitionFrom;
+static double s_effectLastOutput;
+static s16 s_effectInputPCM[4096];
+static soundtouch::SAMPLETYPE s_effectInput[4096];
+static soundtouch::SAMPLETYPE s_effectOutput[512];
+
+static void InitEffectAudio(int frequency)
+{
+    if (!s_effectBlip) s_effectBlip = blip_new(32768);
+    blip_set_rates(s_effectBlip, INTERNAL_SAMPLE_RATE, frequency);
+    s_effectTempo.setSampleRate(frequency);
+    s_effectTempo.setChannels(1); // Simulator currently presents both buses as mono.
+    // Small windows suit short game effects and keep the processing delay bounded.
+    s_effectTempo.setSetting(SETTING_SEQUENCE_MS, 16);
+    s_effectTempo.setSetting(SETTING_SEEKWINDOW_MS, 6);
+    s_effectTempo.setSetting(SETTING_OVERLAP_MS, 4);
+    s_effectTransitionFrames = std::max(1, frequency / 200); // Five millisecond transition.
+    // Grow SoundTouch's FIFO buffers during setup rather than on the first callback.
+    static const soundtouch::SAMPLETYPE warmup[16384] = {};
+    for (double tempo : {10.0, 1.0}) {
+        s_effectTempo.setTempo(tempo);
+        s_effectTempo.putSamples(warmup, 16384);
+        s_effectTempo.receiveSamples(s_effectTempo.numSamples());
+        s_effectTempo.clear();
+    }
+}
+
+static void FeedEffectAudio()
+{
+    // At normal speed use the original sample stream directly, without DSP latency.
+    if (s_effectTempoMultiplier == 1.0f) return;
+    int count;
+    while ((count = blip_samples_avail(s_effectBlip)) > 0) {
+        count = std::min(count, 4096);
+        blip_read_samples(s_effectBlip, s_effectInputPCM, count, FALSE);
+        for (int sample = 0; sample < count; ++sample) {
+            if constexpr (std::is_floating_point_v<soundtouch::SAMPLETYPE>)
+                s_effectInput[sample] = s_effectInputPCM[sample] / 32768.0f;
+            else
+                s_effectInput[sample] = s_effectInputPCM[sample];
+        }
+        s_effectTempo.putSamples(s_effectInput, count);
+    }
+}
+
 void SIM_Audio_SetFastForwardMultiplier(float multiplier)
 {
     s_fastForwardMultiplier.store(SIM_Config_ValidateFastForwardMultiplier(multiplier),
@@ -138,6 +197,7 @@ static void RunSoundTick(BOOL accelerated)
 
 void SIM_Audio_Init(int aAudioFrequency)
 {
+    InitEffectAudio(aAudioFrequency);
     s_BlipLeft = blip_new(512*64);
     s_BlipRight = blip_new(512*64);
 
@@ -170,6 +230,20 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
     TracyCZone(ctx, 1);
     #endif
     const double multiplier = s_fastForwardMultiplier.load(std::memory_order_relaxed);
+    if (s_effectTempoMultiplier != multiplier) {
+        if (s_effectTempoMultiplier == 1.0f || multiplier == 1.0f) {
+            // Discard the short DSP tail when switching to/from the direct path.
+            // Decoder/sequence positions continue; neither is restarted.
+            s_effectTempo.clear();
+            s_effectOutputPrimed = false;
+        }
+        if (s_effectTempoMultiplier > 0) {
+            s_effectTransitionFrom = s_effectLastOutput;
+            s_effectTransitionRemaining = s_effectTransitionFrames;
+        }
+        s_effectTempo.setTempo(multiplier);
+        s_effectTempoMultiplier = multiplier;
+    }
     // Fixed output clock; music and effects advance independently before mixing.
     while (blip_samples_avail(s_BlipLeft) < len / 4) {
         for (int clock = 0; clock < 2; ++clock) {
@@ -178,18 +252,26 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
                 s_tickRemaining[clock] += s_soundTickCycles;
             }
         }
-        u32 cycles = 512;
+        // Keep effect synthesis resolution at roughly 512 original channel clocks,
+        // including at high speed. Resampling an already pitched-up mix loses detail.
+        u32 cycles = std::max(1u, (u32)(512.0 / multiplier));
         const double untilTick = std::fmin(s_tickRemaining[0], s_tickRemaining[1] / multiplier);
         if (untilTick < cycles) cycles = (u32)std::ceil(untilTick);
 
         s32 left = 0;
         s32 right = 0;
+        s32 effectLeft = 0;
+        s32 effectRight = 0;
         for (int chNo = 0; chNo < 16; ++chNo) {
             const double channelCycles = cycles * (s_channelFastForward[chNo] ? multiplier : 1.0)
                                          + s_channelCycleFraction[chNo];
             const u32 wholeCycles = (u32)channelCycles;
             s_channelCycleFraction[chNo] = channelCycles - wholeCycles;
-            PanOutput(SIM_Audio_RunChannel(wholeCycles, chNo), &left, &right, chNo);
+            const s32 sample = SIM_Audio_RunChannel(wholeCycles, chNo);
+            if (s_channelFastForward[chNo])
+                PanOutput(sample, &effectLeft, &effectRight, chNo);
+            else
+                PanOutput(sample, &left, &right, chNo);
         }
         s_tickRemaining[0] -= cycles;
         s_tickRemaining[1] -= cycles * multiplier;
@@ -197,6 +279,12 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
         // Preserve the simulator's existing mono presentation.
         right = left;
         s_blipTimer += cycles;
+        const double effectCycles = cycles * multiplier + s_effectClockFraction;
+        const u32 wholeEffectCycles = (u32)effectCycles;
+        s_effectClockFraction = effectCycles - wholeEffectCycles;
+        s_effectBlipTimer += wholeEffectCycles;
+        blip_add_delta(s_effectBlip, s_effectBlipTimer, effectLeft - s_effectLastSample);
+        s_effectLastSample = effectLeft;
         // Also emit the transition back to zero when the last channel stops.
         blip_add_delta(s_BlipLeft, s_blipTimer, left - s_outputLastLeftSample);
         blip_add_delta(s_BlipRight, s_blipTimer, right - s_outputLastRightSample);
@@ -206,7 +294,10 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
         if (s_blipTimer >= 4096) {
             blip_end_frame(s_BlipLeft, s_blipTimer);
             blip_end_frame(s_BlipRight, s_blipTimer);
+            blip_end_frame(s_effectBlip, s_effectBlipTimer);
+            s_effectBlipTimer = 0;
             s_blipTimer = 0;
+            FeedEffectAudio();
         }
     }
 
@@ -225,6 +316,38 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
     s16 * tempbuf = (s16*)stream;
     blip_read_samples(s_BlipLeft, tempbuf, avail, TRUE);
     blip_read_samples(s_BlipRight, tempbuf+1, avail, TRUE);
+
+    // Prime a small cushion once, then drain only at the device rate. Never advance
+    // simulated channels ahead of the current callback to satisfy DSP buffering.
+    const bool directEffects = multiplier == 1.0;
+    if (s_effectTempo.numSamples() > 4096)
+        s_effectTempo.receiveSamples(s_effectTempo.numSamples() - 4096);
+    if (!s_effectOutputPrimed && s_effectTempo.numSamples() >= 1536)
+        s_effectOutputPrimed = true;
+    for (int position = 0; position < avail; position += 512) {
+        const int count = std::min(512, avail - position);
+        const int received = directEffects
+            ? blip_read_samples(s_effectBlip, s_effectInputPCM, count, FALSE)
+            : s_effectOutputPrimed ? s_effectTempo.receiveSamples(s_effectOutput, count) : 0;
+        for (int sample = 0; sample < count; ++sample) {
+            double effect = 0;
+            if (sample < received) {
+                effect = directEffects ? s_effectInputPCM[sample]
+                    : std::is_floating_point_v<soundtouch::SAMPLETYPE>
+                        ? s_effectOutput[sample] * 32768.0 : s_effectOutput[sample];
+            }
+            if (s_effectTransitionRemaining > 0) {
+                const double mix = 1.0 - (double)s_effectTransitionRemaining / s_effectTransitionFrames;
+                effect = s_effectTransitionFrom * (1.0 - mix) + effect * mix;
+                --s_effectTransitionRemaining;
+            }
+            s_effectLastOutput = effect;
+            for (int side = 0; side < 2; ++side) {
+                const int index = (position + sample) * 2 + side;
+                tempbuf[index] = (s16)std::clamp((int)tempbuf[index] + (int)effect, -32768, 32767);
+            }
+        }
+    }
     #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(ctx);
     #endif

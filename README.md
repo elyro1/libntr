@@ -45,6 +45,13 @@ sound commands. Direct wave playback can use
 `SIM_Audio_SetChannelFastForward(channelNo, enabled)` before its start command.
 Unclassified players and channels retain normal speed. Ownership persists on
 released notes and changes when a channel is allocated to another player.
-Accelerated sounds increase pitch as well as tempo; music can remain at normal
-speed by leaving its logical player unclassified. The multiplier is a target
-rate; reaching it depends on rendering and audio workload.
+Accelerated sounds keep their original pitch. A separate effects stream uses
+SoundTouch to shorten playback before mixing with music. Normal-speed effects
+bypass processing; accelerated effects have a small buffering delay. Returning
+to normal speed discards the buffered tail with a short transition. Music stays
+at normal speed by leaving its logical player unclassified. The multiplier is a
+target rate; reaching it depends on rendering and audio workload.
+
+Simulator builds require SoundTouch 2.3 or later (`soundtouch` via pkg-config).
+For Windows, include the SoundTouch DLL alongside the executable. DS builds do
+not use this dependency.

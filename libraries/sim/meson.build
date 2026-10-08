@@ -19,7 +19,9 @@ enet_lib = meson.get_compiler('c').find_library('enet', dirs: '/opt/devkitpro/po
 endif
 enet_dep = declare_dependency(dependencies: [enet_lib])
 
-libsim_dependencies = [sdl2_dep, enet_dep]
+soundtouch_dep = dependency('soundtouch', version: '>=2.3',
+    native: (build_target == 'linux' or build_target == 'win64'))
+libsim_dependencies = [sdl2_dep, enet_dep, soundtouch_dep]
 libsim_args = [ ]
 
 if(build_target == 'win64')
@@ -106,4 +108,3 @@ libsim = library('sim',
 )
 
 nitrosdk_libs += libsim
-
