@@ -130,67 +130,39 @@ void ClipSegment(fx32* outbuf, fx32 * vin, fx32 * vout, int comp, s32 plane, BOO
 
 static int ClipAgainstPlane(fx32 verts[][4], int nVerts, int clipStart, int comp, BOOL attribs)
 {
+    // A box face can cross the viewport even when all its original corners
+    // are offscreen. Keep the actual intersections for subsequent planes.
     fx32 temp[10][4];
-    int prev, next;
-    int c = clipStart;
-
-    if (clipStart == 2)
-    {
-        temp[0][0] = verts[0][0]; temp[0][1] = verts[0][1]; temp[0][2] = verts[0][2]; temp[0][3] = verts[0][3];
-        temp[1][0] = verts[1][0]; temp[1][1] = verts[1][1]; temp[1][2] = verts[1][2]; temp[1][3] = verts[1][3];
-    }
-
-    for(int i = clipStart; i < nVerts; i++) {
-        prev = i-1; if (prev < 0) prev = nVerts-1;
-        next = i+1; if (next >= nVerts) next = 0;
-
-        fx32 vtx[4];
-        vtx[0] = verts[i][0]; vtx[1] = verts[i][1]; vtx[2] = verts[i][2]; vtx[3] = verts[i][3];
-        if(vtx[comp] > vtx[3]) {
-            //if ((comp == 2) && (!(gpu.CurPolygonAttr & (1<<12)))) return 0;  //I think this is the W buffering thing
-
-            fx32 * vprev = verts[prev];
-            if(vprev[comp] <= vprev[3]) {
-                //ClipSegment((fx32*)&temp[c], &vtx[0], vprev, comp, 1, attribs);
-                c++;
-            }
-
-            fx32 * vnext = verts[next];
-            if(vnext[comp] <= vnext[3]) {
-                //ClipSegment((fx32*)&temp[c], &vtx[0], vnext, comp, 1, attribs);
-                c++;
-            }
-        } else {
-            memcpy(&temp[c++], vtx, sizeof(fx32)*4);
+    for(int plane = 1; plane >= -1; plane -= 2) {
+        if(nVerts <= clipStart) {
+            return clipStart;
         }
-    }
-
-    nVerts = c;
-    c = clipStart;
-    for(int i=clipStart; i < nVerts; i++) {
-        prev = i-1; if (prev < 0) prev = nVerts-1;
-        next = i+1; if (next >= nVerts) next = 0;
-
-        fx32 vtx[4];
-        vtx[0] = temp[i][0]; vtx[1] = temp[i][1]; vtx[2] = temp[i][2]; vtx[3] = temp[i][3];
-        if(vtx[comp] < -vtx[3]) {
-            fx32 * vprev = temp[prev];
-            if(vprev[comp] >= -vprev[3]) {
-                //ClipSegment((fx32*)&verts[c], &vtx[0], vprev, comp, -1, attribs);
-                c++;
+        memcpy(temp, verts, clipStart * sizeof(temp[0]));
+        int count = clipStart;
+        const fx32 *previous = verts[nVerts - 1];
+        s64 previousDistance = (s64)previous[3] - (s64)plane * previous[comp];
+        for(int i = clipStart; i < nVerts; i++) {
+            const fx32 *current = verts[i];
+            s64 currentDistance = (s64)current[3] - (s64)plane * current[comp];
+            if((previousDistance >= 0) != (currentDistance >= 0)) {
+                double fraction = (double)previousDistance / (previousDistance - currentDistance);
+                for(int axis = 0; axis < 4; axis++) {
+                    temp[count][axis] = (fx32)(previous[axis] +
+                        ((s64)current[axis] - previous[axis]) * fraction);
+                }
+                temp[count][comp] = plane * temp[count][3];
+                count++;
             }
-
-            fx32 * vnext = temp[next];
-            if(vnext[comp] >= -vnext[3]) {
-                //ClipSegment((fx32*)&verts[c], &vtx[0], vnext, comp, -1, attribs);
-                c++;
+            if(currentDistance >= 0) {
+                memcpy(temp[count++], current, sizeof(temp[0]));
             }
-        } else {
-            memcpy(&verts[c++], vtx, sizeof(fx32)*4);
+            previous = current;
+            previousDistance = currentDistance;
         }
+        memcpy(verts, temp, count * sizeof(temp[0]));
+        nVerts = count;
     }
-
-    return c;
+    return nVerts;
 }
 
 int G3SIM_ClipPolygon(fx32 verts[][4], int nVerts, int clipStart, BOOL attribs)
@@ -432,12 +404,12 @@ void G3SIM_BoxTest(s16 x, s16 y, s16 z, s16 width, s16 height, s16 depth)
     fx32 cube[8][4];
     fx32 face[10][4];
 
-    s16 x0 = x;
-    s16 y0 = y;
-    s16 z0 = z;
-    s16 x1 = width;
-    s16 y1 = height;
-    s16 z1 = depth;
+    fx32 x0 = x;
+    fx32 y0 = y;
+    fx32 z0 = z;
+    fx32 x1 = width;
+    fx32 y1 = height;
+    fx32 z1 = depth;
 
     int res = 0;
 
