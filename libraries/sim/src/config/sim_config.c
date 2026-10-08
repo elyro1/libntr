@@ -113,6 +113,9 @@ static int IniHandler(void* user, const char* section, const char* name,
     if(MATCH("PAD", "SelectKey")) {
         config->padSettings.selectKey = atoi(value);
     }
+    if(MATCH("PAD", "FastForwardKey")) {
+        config->padSettings.fastForwardKey = atoi(value);
+    }
     if(MATCH("PAD", "GUIKey")) {
         config->padSettings.guiKey = atoi(value);
     }
@@ -377,6 +380,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->padSettings.startKey = SDLK_RETURN;
     aConfig->padSettings.selectKey = SDLK_RSHIFT;
     aConfig->padSettings.guiKey = SDLK_TAB;
+    aConfig->padSettings.fastForwardKey = SDLK_F7;
     aConfig->padSettings.aJoyKey = 0;
     aConfig->padSettings.bJoyKey = 1;
     aConfig->padSettings.xJoyKey = 2;
@@ -463,6 +467,7 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     fprintf(configFile, "StartKey=%d\n", aConfig->padSettings.startKey);
     fprintf(configFile, "SelectKey=%d\n", aConfig->padSettings.selectKey);
     fprintf(configFile, "GUIKey=%d\n", aConfig->padSettings.guiKey);
+    fprintf(configFile, "FastForwardKey=%d\n", aConfig->padSettings.fastForwardKey);
     fprintf(configFile, "AJoyKey=%d\n", aConfig->padSettings.aJoyKey);
     fprintf(configFile, "BJoyKey=%d\n", aConfig->padSettings.bJoyKey);
     fprintf(configFile, "XJoyKey=%d\n", aConfig->padSettings.xJoyKey);

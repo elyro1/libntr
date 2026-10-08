@@ -60,7 +60,8 @@ void AppConfigMain(bool *openState) {
     if (ImGui::SliderFloat("Fast-forward speed", &fastForwardMultiplier, 1.0f, 10.0f, "%.2fx")) {
         configChanged = true;
     }
-    ImGui::TextWrapped("Hold Space to speed up the game and sound effects. Background music keeps its normal speed.");
+    ImGui::TextWrapped("Hold %s to speed up the game and sound effects. Background music keeps its normal speed.",
+        SDL_GetKeyName(sConfig->padSettings.fastForwardKey));
 
     ImGui::End();
 

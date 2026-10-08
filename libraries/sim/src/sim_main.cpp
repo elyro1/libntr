@@ -162,10 +162,12 @@ static float sEffectiveSpeed = 1.0f;
 
 static void UpdateFastForward(SDL_Window *gameWindow) {
   const Uint8 *keys = SDL_GetKeyboardState(nullptr);
+  const SDL_Scancode fastForwardKey = SDL_GetScancodeFromKey(s_SIM_config.padSettings.fastForwardKey);
   sFastForwardActive = SDL_GetKeyboardFocus() == gameWindow &&
                        !ImGui::GetIO().WantCaptureKeyboard &&
                        !SIM::GUI::IsGameLogicPaused() &&
-                       keys[SDL_SCANCODE_SPACE];
+                       fastForwardKey != SDL_SCANCODE_UNKNOWN &&
+                       keys[fastForwardKey];
   sEffectiveSpeed = sFastForwardActive
       ? SIM_Config_ValidateFastForwardMultiplier(s_SIM_config.fastForwardMultiplier)
       : 1.0f;
@@ -1648,7 +1650,7 @@ void *SIM_Render(void *arg) {
 #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(SimRenderZone);
 #endif
-    // Advance game frames and VBlank tasks at the configured Space-held speed.
+    // Advance game frames and VBlank tasks at the configured fast-forward speed.
     if (sFastForwardActive || s_SIM_config.capFrameRate) {
       const u64 frameBudgetNs = sFastForwardActive
                                    ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)

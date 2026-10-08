@@ -29,6 +29,7 @@ typedef struct {
     int startKey;
     int selectKey;
     int guiKey;
+    int fastForwardKey;
 
     // Joystick keys
     int joyAxisDeadzone;
@@ -58,7 +59,7 @@ typedef struct {
     BOOL swapScreens; /* Swap screen positions */
     u8 vsyncInterval; /* Vertical sync interval. Set to 0 to disable vsync, 1 every vblank, 2 every second vblank etc*/
     u8 capFrameRate; /* Should the frame rate be capped to 60 fps? */
-    float fastForwardMultiplier; /* Space-held speed, from 1x to 10x. */
+    float fastForwardMultiplier; /* Speed while holding the fast-forward key, from 1x to 10x. */
     u8 macAddr[6]; /* MAC address */
     SIM_config_pad_settings_type padSettings; /* Input pad settings */
     NVRAMConfig osNvramConfig; /* OS NVRAM config */

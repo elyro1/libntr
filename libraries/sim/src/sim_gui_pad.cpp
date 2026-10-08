@@ -114,7 +114,8 @@ void AppPadMain(bool *openState) {
     KeySettingButton("Y   ", 4, sConfig->padSettings.yKey);
     KeySettingButton("L   ", 5, sConfig->padSettings.lKey);
     KeySettingButton("R   ", 6, sConfig->padSettings.rKey);
-    KeySettingButton("GUI ", 6, sConfig->padSettings.guiKey);
+    KeySettingButton("GUI ", 25, sConfig->padSettings.guiKey);
+    KeySettingButton("Speedup ", 26, sConfig->padSettings.fastForwardKey);
 
     ImGui::NextColumn();
 
