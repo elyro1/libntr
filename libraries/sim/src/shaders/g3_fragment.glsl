@@ -4,13 +4,15 @@ R""(
 uniform sampler2D myTexture;
 uniform int useTexture;
 uniform int polygonMode;
+// 0: all pixels, 1: opaque pixels, 2: translucent pixels.
+uniform int alphaPass;
 uniform int useFog;
 uniform vec4 fogColor;
 uniform float fogDepthBoundary[32];
 uniform float fogDensity[32];
 smooth in vec2 fragTexCoord;
-smooth in vec4 fragInColor;
-smooth in vec4 coords;
+noperspective in vec4 fragInColor;
+noperspective in vec4 coords;
 layout (location = 0) out vec4 color;
 layout (location = 1) out vec4 fogData;
 
@@ -31,6 +33,13 @@ void main()
         }
     } else {
         shadedColor = fragInColor;
+    }
+    // Alpha textures contain both opaque and translucent pixels. Only opaque
+    // pixels write depth by default, even when they share the same polygon.
+    if(shadedColor.a <= 0.0 ||
+       (alphaPass == 1 && shadedColor.a < 1.0) ||
+       (alphaPass == 2 && shadedColor.a >= 1.0)) {
+        discard;
     }
     
     // Fog is applied after translucent polygons have been blended. A flashlight

@@ -170,7 +170,7 @@ void G3SIM_DrawInit()
 	glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
 	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, x));
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, x));
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, s));
 	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, r));
 
@@ -231,6 +231,18 @@ static void G3SIM_ApplyTextureWrap(const G3SIM_TexImageParam_t &texture)
 		!texture.repeatS ? GL_CLAMP_TO_EDGE : (texture.flipS ? GL_MIRRORED_REPEAT : GL_REPEAT));
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
 		!texture.repeatT ? GL_CLAMP_TO_EDGE : (texture.flipT ? GL_MIRRORED_REPEAT : GL_REPEAT));
+}
+
+static void G3SIM_ApplyPolygonRasterState(const G3SIM_PolygonAttr_t &polygon)
+{
+	glDepthFunc(polygon.depthTest ? GL_LEQUAL : GL_LESS);
+	if(polygon.cullMode == GX_CULL_NONE) {
+		glDisable(GL_CULL_FACE);
+	} else {
+		glEnable(GL_CULL_FACE);
+		glCullFace(polygon.cullMode == GX_CULL_ALL ? GL_FRONT_AND_BACK :
+			(polygon.cullMode == GX_CULL_FRONT ? GL_BACK : GL_FRONT));
+	}
 }
 
 void G3SIM_FlushArray()
@@ -355,6 +367,14 @@ void G3SIM_FlushArray()
 	   || s_texImageParam.textureFormat == GX_TEXFMT_A5I3
 	   || s_curPolygonAttr.alpha < 0.99f )
 	 && s_G3DrawCurVertIdx != 0) {
+		// A3I5/A5I3 textures can contain opaque texels. Draw those with the
+		// opaque scene; defer only their translucent texels for blending.
+		if(s_curPolygonAttr.alphaInt == 31) {
+			glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 1);
+			glDepthMask(GL_TRUE);
+			G3SIM_DrawArray();
+		}
+		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
 		g3_draw_item_t * item = &s_G3DrawItemList[s_G3DrawItemListCount];
 
 		memset(item, 0, sizeof(g3_draw_item_t));
@@ -388,6 +408,8 @@ void G3SIM_FlushArray()
 
 		s_G3DrawItemListCount++;
 	} else {
+		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
+		glDepthMask(GL_TRUE);
 		G3SIM_DrawArray();
 	}
 
@@ -423,6 +445,9 @@ void G3SIM_DrawItems()
 		glProgramUniform1i(g3shaderProgramID, polygonModeLoc, item->polygonAttr.polygonMode);
 
 		G3SIM_ApplyFog(item->fog);
+		G3SIM_ApplyPolygonRasterState(item->polygonAttr);
+		glDepthMask(item->polygonAttr.translucentDepth ? GL_TRUE : GL_FALSE);
+		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 2);
 
 		glBindVertexArray(s_G3DrawVertexArray);
 		glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
@@ -436,4 +461,7 @@ void G3SIM_DrawItems()
 		}
 	}
 	s_G3DrawItemListCount = 0;
+	glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
+	glDepthMask(GL_TRUE);
+	G3SIM_ApplyPolygonRasterState(s_curPolygonAttr);
 }

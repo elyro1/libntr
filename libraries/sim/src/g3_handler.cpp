@@ -741,7 +741,7 @@ void G3SIM_DecodeTexA3I5(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t)
 			texOffset++;
 			out[texOffset] = b;
 			texOffset++;
-			out[texOffset] = alpha * 8;
+			out[texOffset] = alpha * 255 / 31;
 			texOffset++;
             vramTex++;
         }
@@ -779,7 +779,7 @@ void G3SIM_DecodeTexA5I3(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t)
 			texOffset++;
 			out[texOffset] = b;
 			texOffset++;
-			out[texOffset] = alpha*8;
+			out[texOffset] = alpha * 255 / 31;
 			texOffset++;
             vramTex++;
         }
@@ -1444,8 +1444,9 @@ void G3SIM_PolygonAttr(u32 data)
     u8 cullMode = (data & 0b11000000) >> 6;
     u8 depthTest = (data & 0b100000000000000) >> 14;
     u8 useFog = (data & 0b1000000000000000) >> 15;
+    u8 translucentDepth = (data >> 11) & 1;
 
-    if(cullMode != s_curPolygonAttr.cullMode || polygonMode != s_curPolygonAttr.polygonMode || alpha != s_curPolygonAttr.alphaInt || depthTest != s_curPolygonAttr.depthTest || useFog != s_curPolygonAttr.fogEnable)
+    if(cullMode != s_curPolygonAttr.cullMode || polygonMode != s_curPolygonAttr.polygonMode || alpha != s_curPolygonAttr.alphaInt || depthTest != s_curPolygonAttr.depthTest || useFog != s_curPolygonAttr.fogEnable || translucentDepth != s_curPolygonAttr.translucentDepth)
     {
         // Flush the vertex buffer
         G3SIM_FlushArray();
@@ -1466,6 +1467,7 @@ void G3SIM_PolygonAttr(u32 data)
     s_curPolygonAttr.alphaInt = alpha;
     s_curPolygonAttr.depthTest = depthTest;
     s_curPolygonAttr.fogEnable = useFog;
+    s_curPolygonAttr.translucentDepth = translucentDepth;
 
     if(alpha == 31){
         s_curPolygonAttr.alpha = 1.0f;
@@ -1671,129 +1673,115 @@ void G3SIM_Vtx(s16 x, s16 y, s16 z)
     return;
 }
 
-void G3SIM_SubmitPolygon(G3SIM_FxVtx_t * fxVerts, int numVerts) {
-    G3SIM_Vertex_t glVerts[6];
-    u8 addPolygon = TRUE;
-    int numFinalVerts = numVerts;
+// Clip before perspective division and depth quantization. In particular, a
+// negative W must not be masked into a positive value for geometry behind the
+// camera, such as the long Distortion World waterfall.
+static int ClipRenderPolygon(G3SIM_FxVtx_t *verts, int count, bool nearPlane)
+{
+    G3SIM_FxVtx_t clipped[8];
+    int outCount = 0;
+    auto distance = [nearPlane](const G3SIM_FxVtx_t &v) -> s64 {
+        return nearPlane ? (s64)v.z + v.w : (s64)v.w - 1;
+    };
+    G3SIM_FxVtx_t previous = verts[count - 1];
+    s64 previousDistance = distance(previous);
+    for(int i = 0; i < count; i++) {
+        const G3SIM_FxVtx_t &current = verts[i];
+        s64 currentDistance = distance(current);
+        if((previousDistance >= 0) != (currentDistance >= 0)) {
+            double fraction = (double)previousDistance / (previousDistance - currentDistance);
+            G3SIM_FxVtx_t intersection;
+            for(int axis = 0; axis < 4; axis++) {
+                intersection.nums[axis] = (fx32)(previous.nums[axis] +
+                    ((s64)current.nums[axis] - previous.nums[axis]) * fraction);
+            }
+            // Keep the intersection exactly on the plane after rounding.
+            if(nearPlane) {
+                intersection.z = -intersection.w;
+            } else {
+                intersection.w = 1;
+            }
+#define INTERPOLATE_ATTRIBUTE(attribute) \
+            intersection.attribute = previous.attribute + \
+                (current.attribute - previous.attribute) * fraction
+            INTERPOLATE_ATTRIBUTE(s);
+            INTERPOLATE_ATTRIBUTE(t);
+            INTERPOLATE_ATTRIBUTE(r);
+            INTERPOLATE_ATTRIBUTE(g);
+            INTERPOLATE_ATTRIBUTE(b);
+            INTERPOLATE_ATTRIBUTE(a);
+#undef INTERPOLATE_ATTRIBUTE
+            clipped[outCount++] = intersection;
+        }
+        if(currentDistance >= 0) {
+            clipped[outCount++] = current;
+        }
+        previous = current;
+        previousDistance = currentDistance;
+    }
+    memcpy(verts, clipped, outCount * sizeof(*verts));
+    return outCount;
+}
 
+void G3SIM_SubmitPolygon(G3SIM_FxVtx_t *fxVerts, int numVerts)
+{
     if(numVerts < 3 || numVerts > 4) {
         SIM_assert_always();
         return;
     }
 
-    for(int i=0; i < numVerts; i++) {
-        G3SIM_FxVtx_t * curVtx = &fxVerts[i];
-    
-        // Truncate W to 24 bits
-        curVtx->w &= 0x00FFFFFF;
-    
-        float floatX, floatY, floatW;
-        float screenX, screenY;
-    
-        floatX = FX_FX32_TO_F32(curVtx->x);
-        floatY = FX_FX32_TO_F32(curVtx->y);
-        floatW = FX_FX32_TO_F32(curVtx->w);
-    
-        screenX = (((floatX+floatW)*256.0f) / (2*floatW));
-        screenY = (((floatY+floatW)*192.0f) / (2*floatW));
-        					
-        screenX = (screenX / 128.0f) - 1.0f;
-        screenY = (screenY / 96.0f) - 1.0f;
-    
-        glVerts[i].x = screenX;
-        glVerts[i].y = screenY;
-        glVerts[i].s = curVtx->s;
-        glVerts[i].t = curVtx->t;
-        glVerts[i].r = curVtx->r;
-        glVerts[i].g = curVtx->g;
-        glVerts[i].b = curVtx->b;
-        glVerts[i].a = curVtx->a;
+    // Work on a copy: strips reuse the source vertices for their next polygon.
+    G3SIM_FxVtx_t clipped[8];
+    memcpy(clipped, fxVerts, numVerts * sizeof(*fxVerts));
+    numVerts = ClipRenderPolygon(clipped, numVerts, true);
+    if(numVerts < 3) {
+        return;
+    }
+    numVerts = ClipRenderPolygon(clipped, numVerts, false);
+    if(numVerts < 3) {
+        return;
     }
 
-    // Get the W size and remove the polygon if W is 0
+    // Determine the common shift used for the emulated W-buffer depth.
     u32 wsize = 0;
-    for(int i=0; i < 4; i++) {
-        G3SIM_FxVtx_t * curVtx = &fxVerts[i];
-        u32 w = curVtx->w;
-        if(w == 0){
-            addPolygon = FALSE;
-        }
-        while ((w >> wsize) && (wsize < 32)) {
+    for(int i = 0; i < numVerts; i++) {
+        u32 w = clipped[i].w;
+        while(wsize < 32 && (w >> wsize)) {
             wsize += 4;
         }
     }
 
-    // Normalize W
-    for(int i=0; i < 4; i++) {
-        G3SIM_FxVtx_t * curVtx = &fxVerts[i];
-        
-        s32 w, wshifted;
-        
-        if(wsize < 16) {
-        	w = curVtx->w << (16-wsize);
-        	wshifted = w >> (16-wsize);
-        } else {
-        	w = curVtx->w >> (wsize - 16);
-        	wshifted = w << (wsize - 16);
-        }
-        
-        s32 z;
-        
-        if(curVtx->w) {
-        	z = ((((s64)curVtx->z * 0x4000) / curVtx->w) + 0x3FFF) * 0x200;
-        } else {
-        	z = 0x7FFE00;
-        }
-        
+    G3SIM_Vertex_t glVerts[8];
+    for(int i = 0; i < numVerts; i++) {
+        const G3SIM_FxVtx_t &v = clipped[i];
+        G3SIM_Vertex_t &out = glVerts[i];
+        out.x = (float)v.x / v.w;
+        out.y = (float)v.y / v.w;
+        out.w = FX_FX32_TO_F32(v.w);
+        out.s = v.s;
+        out.t = v.t;
+        out.r = v.r;
+        out.g = v.g;
+        out.b = v.b;
+        out.a = v.a;
+
+        s64 z = ((((s64)v.z * 0x4000) / v.w) + 0x3FFF) * 0x200;
         if(s_SIM_useWBuffer) {
-        	z = wshifted;
+            z = wsize < 16 ? v.w : (v.w >> (wsize - 16)) << (wsize - 16);
         }
-        
         if(z < 0) {
-        	z = 0;
+            z = 0;
         } else if(z > 0xFFFFFF) {
-        	z = 0xFFFFFF;
+            z = 0xFFFFFF;
         }
-        
-        glVerts[i].z = (((float)z / 16777215.0f) * 2.0f) - 1.0f;
-        glVerts[i].w = (((float)w / 16777215.0f) * 2.0f) - 1.0f;
+        out.z = ((float)z / 16777215.0f) * 2.0f - 1.0f;
     }
 
-    // If we have a quad, convert it into 2 triangles
-    if(numVerts == 4) {
-        //make a copy of the quad
-        G3SIM_Vertex_t quad[4];
-        memcpy(quad, glVerts, sizeof(G3SIM_Vertex_t) * 4);
-
-        //Convert to 2 triangles
-        #define CopyVertex(srcIdx, destIdx) memcpy(&glVerts[destIdx], &quad[srcIdx], sizeof(G3SIM_Vertex_t))
-        CopyVertex(0, 0);
-        CopyVertex(1, 1);
-        CopyVertex(2, 2);
-        CopyVertex(2, 3);
-        CopyVertex(3, 4);
-        CopyVertex(0, 5);
-        #undef CopyVertex
-
-        numFinalVerts = 6;
+    // Clipping may turn a quad into a pentagon. A triangle fan preserves its
+    // winding and attributes; OpenGL handles the remaining viewport clipping.
+    for(int i = 1; i < numVerts - 1; i++) {
+        G3SIM_AddVtx(&glVerts[0]);
+        G3SIM_AddVtx(&glVerts[i]);
+        G3SIM_AddVtx(&glVerts[i + 1]);
     }
-
-    // Check if any of the verts are horribly out of bounds
-    // TODO: This is a HACK and we should eventually remove it
-    for(int i=0; i < numFinalVerts; i++) {
-        if(glVerts[i].x > 50.0f || glVerts[i].x < -50.0f) {
-            addPolygon = FALSE;
-        }
-        if(glVerts[i].y > 50.0f || glVerts[i].y < -50.0f) {
-            addPolygon = FALSE;
-        }
-    }
-
-    if(addPolygon) {
-        for(int i=0; i < numFinalVerts; i++) {
-            G3SIM_AddVtx(&glVerts[i]);
-        }
-    }
-
-
 }
