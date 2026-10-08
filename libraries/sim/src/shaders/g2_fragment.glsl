@@ -27,6 +27,7 @@ out vec4 color;
 uniform float presentationWidth;
 uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
+uniform bool fieldDarknessMask;
 uniform sampler2DArray fieldParticlesTexture;
 uniform bool fieldParticlesEnabled;
 uniform bool singleScreen;
@@ -50,7 +51,7 @@ vec4 sampleBg(int layer) {
     // Field weather/shading overlays blend BG2 over the 3D world. Repeat
     // seamless textures; extend cave mask edges without repeating the opening.
     bool fieldOverlay = fieldWidth > 256.0 && bg0as3d != 0 && layer == 2
-        && (fieldOverlayTiled || (((bldcnt >> 6) & 3) == 1
+        && (fieldDarknessMask || fieldOverlayTiled || (((bldcnt >> 6) & 3) == 1
             && (bldcnt & (1 << 2)) != 0 && (bldcnt & (1 << 8)) != 0));
     if (fieldOverlay) {
         if (fieldOverlayTiled) {

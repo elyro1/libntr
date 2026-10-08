@@ -82,6 +82,8 @@ u32 SIM_DecodeTextureAddress(u32 *parameter);
 #endif
 // Repeat seamless weather BG2 textures across the wide field viewport.
 void SIM_SetFieldOverlayTiled(BOOL enabled);
+// Extend the opaque cave mask across the wide field viewport.
+void SIM_SetFieldDarknessMask(BOOL enabled);
 // Register/unregister a MAIN OBJ VRAM range containing seamless field particles.
 void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled);
 // Continue selected field sprites past the native screen edges without repeating.
