@@ -714,6 +714,10 @@ void *SIM_RenderInit(void *arg) {
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                             GL_RENDERBUFFER, g3RenderBufferId);
 
+  glStencilMask(0xff);
+  glClearStencil(0);
+  glClear(GL_STENCIL_BUFFER_BIT);
+
   // Check FBO status
   int fboStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
@@ -1718,7 +1722,9 @@ void SIM_PreRenderVBlank() { SDL_SemPost(vcountVblankSemaphore); }
 void SIM_PostRenderVBlank() {
   if (G3SIM_SwapBuffersCalledThisFrame()) {
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glStencilMask(0xff);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     G3SIM_ResetSwapBuffersCall();
   }
   // Reset Vcount

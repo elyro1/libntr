@@ -424,9 +424,18 @@ void G3SIM_DrawItems()
 	//TODO sort the items by Z coordinate
 
 
+	// The DS blends a translucent pixel only when its polygon ID differs from
+	// the last translucent pixel at that location. Bit 6 distinguishes ID zero
+	// from a pixel that has not been blended yet. Keep this across queue flushes;
+	// the stencil buffer is reset with the 3D framebuffer each frame.
+	glEnable(GL_STENCIL_TEST);
+	glStencilMask(0x7f);
+	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
 	//Draws all the translucent objects that were deferred to the end of the frame.
 	for(int i=0; i<s_G3DrawItemListCount; i++) {
 		g3_draw_item_t * item = &s_G3DrawItemList[i];
+		glStencilFunc(GL_NOTEQUAL, 0x40 | item->polygonAttr.polygonId, 0x7f);
 		if(item->textureId != 0){
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, item->textureId);
@@ -461,6 +470,8 @@ void G3SIM_DrawItems()
 		}
 	}
 	s_G3DrawItemListCount = 0;
+	glDisable(GL_STENCIL_TEST);
+	glStencilMask(0xff);
 	glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
 	glDepthMask(GL_TRUE);
 	G3SIM_ApplyPolygonRasterState(s_curPolygonAttr);
