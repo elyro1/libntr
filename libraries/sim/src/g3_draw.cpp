@@ -13,6 +13,9 @@
 #include <nitro/gx/gx_load.h>
 #include <nitro/gx/gx_vramcnt.h>
 #include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <simulator/sim_frame_profile.h>
 #include <simulator/sim_crc32.h>
 
 #ifdef SDK_BUILD_LINUX
@@ -27,6 +30,44 @@
 
 #define getbit(x,n) ( ( (x) >> (n) ) & 1 )
 
+struct G3Texture {
+    GLuint id = 0;
+    u32 width, height, format, color0, refs = 0;
+    u64 used;
+    std::vector<u8> source, palette;
+};
+static std::unordered_multimap<u64, G3Texture *> sGPUTextures;
+static u64 sGPUBytes, sSourceBytes, sTextureUse, sUploadedBytes;
+static u64 G3SIM_TextureBudget() {
+    const char *value = getenv("PLATINUM_GPU_CACHE_MB");
+    unsigned long mb = value ? strtoul(value, nullptr, 10) : 64;
+    if (mb < 16 || mb > 512) mb = 64;
+    return mb * 1024 * 1024;
+}
+static void G3SIM_TrimTextures(G3Texture *keep) {
+    const u64 budget = G3SIM_TextureBudget();
+    const char *value = getenv("PLATINUM_CACHE_MB");
+    unsigned long cpuMB = value ? strtoul(value, nullptr, 10) : 256;
+    if (cpuMB < 128 || cpuMB > 1024) cpuMB = 256;
+    // Encoded copies used to validate direct VRAM writes share the CPU ceiling.
+    const u64 sourceBudget = cpuMB * 1024 * 1024 / 4;
+    while (sGPUBytes > budget || sSourceBytes > sourceBudget) {
+        auto oldest = sGPUTextures.end();
+        for (auto i = sGPUTextures.begin(); i != sGPUTextures.end(); ++i)
+            if (i->second != keep && !i->second->refs &&
+                (oldest == sGPUTextures.end() || i->second->used < oldest->second->used)) oldest = i;
+        if (oldest == sGPUTextures.end()) break; // Queued versions stay pinned until submission.
+        G3Texture *entry = oldest->second;
+        sGPUBytes -= 4 * entry->width * entry->height;
+        sSourceBytes -= entry->source.size() + entry->palette.size();
+        glDeleteTextures(1, &entry->id);
+        delete entry;
+        sGPUTextures.erase(oldest);
+    }
+    SIM_ProfileSet(SIM_PROFILE_GPU_CACHE_BYTES, sGPUBytes);
+    SIM_ProfileSet(SIM_PROFILE_TEXTURE_SOURCE_BYTES, sSourceBytes);
+}
+
 // Deferred polygons must retain their own fog state. Flashlight models disable
 // fog, so inheriting the last submitted polygon's uniforms lights the whole gym.
 typedef struct {
@@ -40,6 +81,7 @@ typedef struct {
 typedef struct {
 	float zIdx;
 	GLuint textureId;
+	G3Texture *texture;
 	G3SIM_PolygonAttr_t polygonAttr;
 	g3_fog_state_t fog;
 	G3SIM_TexImageParam_t texImageParam;
@@ -49,8 +91,7 @@ typedef struct {
 
 G3SIM_Vertex_t s_G3DrawVerts[G3_DRAW_MAX_VERTS];
 
-// Texture cache based on the CRC of the texture and palette
-std::unordered_map<u64, u8*> sTextureCache;
+
 
 //The item list is used for drawing translucent things sorted by Z position
 static g3_draw_item_t s_G3DrawItemList[G3_DRAW_MAX_ITEMS];
@@ -245,6 +286,107 @@ static void G3SIM_ApplyPolygonRasterState(const G3SIM_PolygonAttr_t &polygon)
 	}
 }
 
+static G3Texture *G3SIM_AcquireTexture() {
+	G3Texture *texture = nullptr;
+
+	if (s_texImageParam.textureFormat != GX_TEXFMT_NONE) {
+        u8 *vramTex;
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+        if (s_texImageParam.textureOffset >= 0x80000)
+            vramTex = (u8 *)SIM_GetExtendedTextureStorage(s_texImageParam.textureOffset, 0);
+        else
+#endif
+            vramTex = (u8 *)getTextureVramBank() + s_texImageParam.textureOffset;
+        u8 *vramPltt = (u8 *)getTexPlttVramBank() + s_texPlttBase;
+        const u32 pixels = s_texImageParam.textureSSize * s_texImageParam.textureTSize;
+        u32 sourceSize = pixels, paletteSize = 0;
+        switch (s_texImageParam.textureFormat) {
+        case GX_TEXFMT_PLTT4: sourceSize = pixels / 4; paletteSize = 8; break;
+        case GX_TEXFMT_PLTT16: sourceSize = pixels / 2; paletteSize = 32; break;
+        case GX_TEXFMT_PLTT256: paletteSize = 512; break;
+        case GX_TEXFMT_A3I5: paletteSize = 64; break;
+        case GX_TEXFMT_A5I3: paletteSize = 16; break;
+        case GX_TEXFMT_DIRECT: sourceSize = pixels * 2; break;
+        default: SIM_assert_always(); return nullptr;
+        }
+        SIM_assert(vramTex != nullptr);
+        // Content validation remains the correctness fallback for every direct,
+        // physical and extended VRAM write. Metadata is part of the identity;
+        // CRC matches are verified byte-for-byte, including palette changes.
+        u64 key = ((u64)SIM_crc32buf(vramTex, sourceSize) << 32) |
+                   (paletteSize ? SIM_crc32buf(vramPltt, paletteSize) : 0);
+        auto matches = sGPUTextures.equal_range(key);
+        for (auto i = matches.first; i != matches.second; ++i) {
+            G3Texture *entry = i->second;
+            if (entry->width == s_texImageParam.textureSSize && entry->height == s_texImageParam.textureTSize &&
+                entry->format == s_texImageParam.textureFormat && entry->color0 == s_texImageParam.color0 &&
+                entry->source.size() == sourceSize && entry->palette.size() == paletteSize &&
+                !memcmp(entry->source.data(), vramTex, sourceSize) &&
+                (!paletteSize || !memcmp(entry->palette.data(), vramPltt, paletteSize))) {
+                texture = entry;
+                SIM_ProfileAdd(SIM_PROFILE_TEXTURE_HITS, 1);
+                break;
+            }
+        }
+        if (!texture) {
+            texture = new G3Texture;
+            texture->width = s_texImageParam.textureSSize;
+            texture->height = s_texImageParam.textureTSize;
+            texture->format = s_texImageParam.textureFormat;
+            texture->color0 = s_texImageParam.color0;
+            texture->source.assign(vramTex, vramTex + sourceSize);
+            texture->palette.assign(vramPltt, vramPltt + paletteSize);
+            std::vector<u8> decoded(pixels * 4);
+            u16 *colors = (u16 *)vramPltt;
+            switch (texture->format) {
+            case GX_TEXFMT_A3I5: G3SIM_DecodeTexA3I5(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_PLTT4: G3SIM_DecodeTex4(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_PLTT16: G3SIM_DecodeTex16(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_PLTT256: G3SIM_DecodeTex256(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_A5I3: G3SIM_DecodeTexA5I3(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_DIRECT: G3SIM_DecodeTexDirect(vramTex, decoded.data(), texture->width, texture->height); break;
+            }
+            glGenTextures(1, &texture->id);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture->id);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texture->width, texture->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, decoded.data());
+            sGPUBytes += pixels * 4;
+            sUploadedBytes += pixels * 4;
+            sSourceBytes += sourceSize + paletteSize;
+            sGPUTextures.emplace(key, texture);
+            SIM_ProfileAdd(SIM_PROFILE_UPLOADS, 1);
+            SIM_ProfileAdd(SIM_PROFILE_UPLOAD_BYTES, pixels * 4);
+        }
+        texture->used = ++sTextureUse;
+        G3SIM_TrimTextures(texture);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture->id);
+        G3SIM_ApplyTextureWrap(s_texImageParam);
+
+    }
+    return texture;
+}
+
+u32 G3SIM_PrewarmTexture(u32 image, u32 palette) {
+    const auto previous = s_texImageParam;
+    const u32 previousPalette = s_texPlttBase;
+    G3SIM_TexImageParam(image);
+    G3SIM_TexPlttBase(palette);
+    if (s_texImageParam.textureFormat == GX_TEXFMT_COMP4x4) {
+        s_texImageParam = previous; s_texPlttBase = previousPalette;
+        return 0;
+    }
+    const u64 before = sUploadedBytes;
+    G3Texture *entry = G3SIM_AcquireTexture();
+    u32 bytes = sUploadedBytes - before;
+    (void)entry;
+    s_texImageParam = previous;
+    s_texPlttBase = previousPalette;
+    return bytes;
+}
+
 void G3SIM_FlushArray()
 {
 	if(s_G3DrawCurVertIdx == 0) {
@@ -256,84 +398,9 @@ void G3SIM_FlushArray()
 	TracyCZone(FlushArrayZone, 1);
 	#endif
 
-	u8 * texBuf = nullptr;
-
-	if( s_texImageParam.textureFormat != GX_TEXFMT_NONE )
-	{
-		GLuint g3TextureId;
-		g3TextureId = SIM_GetTextureID();
-		
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture( GL_TEXTURE_2D, g3TextureId );
-
-		G3SIM_ApplyTextureWrap(s_texImageParam);
-
-        u8 *vramTex;
-#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
-        if (s_texImageParam.textureOffset >= 0x80000)
-            vramTex = (u8 *)SIM_GetExtendedTextureStorage(s_texImageParam.textureOffset, 0);
-        else
-#endif
-            vramTex = (u8 *)(getTextureVramBank() + s_texImageParam.textureOffset);
-		u8 * vramPltt = (u8*)(getTexPlttVramBank() + s_texPlttBase);
-		u16 * colorAddr = (u16*)vramPltt;
-
-		//Calculate the texture + palette CRC
-		u32 paletteCRC = SIM_crc32buf(vramPltt, 512);
-		u32 vramTexBufSize = 0;
-
-		if(s_texImageParam.textureFormat == GX_TEXFMT_PLTT4) {
-			vramTexBufSize = (s_texImageParam.textureSSize * s_texImageParam.textureTSize) >> 2;
-		} else if(s_texImageParam.textureFormat == GX_TEXFMT_PLTT16) {
-			vramTexBufSize = (s_texImageParam.textureSSize * s_texImageParam.textureTSize) >> 1;
-		} else {
-			vramTexBufSize = (s_texImageParam.textureSSize * s_texImageParam.textureTSize);
-		}
-
-		u32 textureCRC = SIM_crc32buf(vramTex, vramTexBufSize);
-
-		u64 finalCRC = (paletteCRC | ((u64)textureCRC << 32));
-		
-
-		if(sTextureCache.count(finalCRC)) {
-			// Texture is in the cache
-			texBuf = sTextureCache[finalCRC];
-		} else {
-			//Convert the DS texture data into a format opengl can understand
-			u8 * outTexBuf = new u8[4*s_texImageParam.textureSSize * s_texImageParam.textureTSize];
-			memset((void*)outTexBuf, 0, 4*s_texImageParam.textureSSize * s_texImageParam.textureTSize);
-
-
-			switch( s_texImageParam.textureFormat ){
-				case GX_TEXFMT_A3I5:
-					G3SIM_DecodeTexA3I5(vramTex, colorAddr, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-				case GX_TEXFMT_PLTT4:
-					G3SIM_DecodeTex4(vramTex, colorAddr, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-				case GX_TEXFMT_PLTT16:
-					G3SIM_DecodeTex16(vramTex, colorAddr, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-				case GX_TEXFMT_PLTT256:
-					G3SIM_DecodeTex256(vramTex, colorAddr, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-				case GX_TEXFMT_COMP4x4:
-					SIM_assert_always();
-					//TODO
-					break;
-				case GX_TEXFMT_A5I3:
-					G3SIM_DecodeTexA5I3(vramTex, colorAddr, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-				case GX_TEXFMT_DIRECT:
-					G3SIM_DecodeTexDirect(vramTex, outTexBuf, s_texImageParam.textureSSize, s_texImageParam.textureTSize);
-					break;
-			}
-
-			sTextureCache[finalCRC] = outTexBuf;
-			texBuf = outTexBuf;
-		}
-
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s_texImageParam.textureSSize, s_texImageParam.textureTSize, GL_RGBA, GL_UNSIGNED_BYTE, (void *)texBuf);
+	const u64 textureProfile = SIM_ProfileNow();
+	G3Texture *texture = G3SIM_AcquireTexture();
+    if (texture) {
 
 		GLint texUnitLoc = glGetUniformLocation(g3shaderProgramID, "myTexture");
 		//set texture 0 in the shader
@@ -348,6 +415,7 @@ void G3SIM_FlushArray()
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useTexture") , 0);							
 	}
 
+	SIM_ProfileAdd(SIM_PROFILE_TEXTURE_NS, SIM_ProfileNow() - textureProfile);
 	// Set the polygon mode in the shader
 	GLint polygonModeLoc = glGetUniformLocation(g3shaderProgramID, "polygonMode");
 	glProgramUniform1i(g3shaderProgramID, polygonModeLoc , s_curPolygonAttr.polygonMode);
@@ -375,23 +443,17 @@ void G3SIM_FlushArray()
 			G3SIM_DrawArray();
 		}
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
+		SIM_assert(s_G3DrawItemListCount < G3_DRAW_MAX_ITEMS);
 		g3_draw_item_t * item = &s_G3DrawItemList[s_G3DrawItemListCount];
 
 		memset(item, 0, sizeof(g3_draw_item_t));
 
 
-		if(s_texImageParam.textureFormat != GX_TEXFMT_NONE) {
-			//Allocate and store off the texture
-			glGenTextures(1, &item->textureId);
-			glBindTexture(GL_TEXTURE_2D, item->textureId);
-        	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-			G3SIM_ApplyTextureWrap(s_texImageParam);
-	
-        	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_texImageParam.textureSSize, s_texImageParam.textureTSize, 0,
-        	         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s_texImageParam.textureSSize, s_texImageParam.textureTSize, GL_RGBA, GL_UNSIGNED_BYTE, (void *)texBuf);
-		}
+		if (texture) {
+            item->texture = texture;
+            item->textureId = texture->id;
+            texture->refs++;
+        }
 
 		item->fog = fog;
 
@@ -466,13 +528,29 @@ void G3SIM_DrawItems()
 		free(item->verts);
 
 		if(item->textureId != 0) {
-			glDeleteTextures(1, &item->textureId);
+			if (item->texture) item->texture->refs--;
+            else glDeleteTextures(1, &item->textureId);
 		}
 	}
 	s_G3DrawItemListCount = 0;
+	G3SIM_TrimTextures(nullptr);
 	glDisable(GL_STENCIL_TEST);
 	glStencilMask(0xff);
 	glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
 	glDepthMask(GL_TRUE);
 	G3SIM_ApplyPolygonRasterState(s_curPolygonAttr);
+}
+
+void G3SIM_ClearTextureCache() {
+    // Context thread only. Finish deferred versions before deleting resources.
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    for (auto &item : sGPUTextures) {
+        glDeleteTextures(1, &item.second->id);
+        delete item.second;
+    }
+    sGPUTextures.clear();
+    sGPUBytes = sSourceBytes = 0;
+    SIM_ProfileSet(SIM_PROFILE_GPU_CACHE_BYTES, 0);
+    SIM_ProfileSet(SIM_PROFILE_TEXTURE_SOURCE_BYTES, 0);
 }

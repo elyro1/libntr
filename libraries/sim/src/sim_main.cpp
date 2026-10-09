@@ -16,6 +16,8 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/glad/glad.h>
 #endif
 #include <simulator/sim.h>
+#include <simulator/sim_frame_profile.h>
+#include <simulator/sim_frame_pacer.h>
 #include <simulator/sim_audio.h>
 #include <simulator/sim_net.h>
 #include <simulator/sim_shaders.hpp>
@@ -116,6 +118,7 @@ extern "C" void SIM_ResetVirtualTextureAddresses(void) {
   // Finish queued draws before IDs can be reused by a new graphics pipeline.
   G3SIM_FlushArray();
   G3SIM_DrawItems();
+  // Content-keyed immutable textures remain valid across VRAM/address resets.
   std::lock_guard<std::mutex> lock(sVirtualTextureMutex);
   sVirtualTextureIDs.clear();
   memset(sVirtualTextures, 0, sizeof(sVirtualTextures));
@@ -181,17 +184,63 @@ static void UpdateFastForward(SDL_Window *gameWindow) {
   }
 }
 
-static void WaitForFrameBudget(u64 frameNs, u64 budgetNs) {
-  while (frameNs < budgetNs) {
-    const u64 remainingMs = (budgetNs - frameNs) / 1000000;
-    // Sleep most of the wait, then yield until the deadline. A millisecond-only
-    // delay is too coarse to pace the 3.32 ms fast-forward frames accurately.
-    SDL_Delay(remainingMs > 1 ? remainingMs - 1 : 0);
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    frameNs = ((now.tv_sec - s_SIM_lastFrameEnd.tv_sec) * 1000000000) +
-              (now.tv_nsec - s_SIM_lastFrameEnd.tv_nsec);
+static SIM_FramePacer sFramePacer;
+static u64 FrameClockNs() {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (u64)now.tv_sec * 1000000000 + now.tv_nsec;
+}
+static void WaitForFrameDeadline(u64 deadline) {
+  u64 now = FrameClockNs();
+  while (now < deadline) {
+    const u64 remaining = deadline - now;
+    // Coarse sleep, then short yields. Never derive the next deadline from
+    // how late the OS happened to wake this frame.
+    SDL_Delay(remaining > 2000000 ? (remaining / 1000000) - 1 : 0);
+    now = FrameClockNs();
   }
+}
+
+// GPU timer results are read asynchronously; no glFinish or blocking query read.
+struct GPUFrameQuery { GLuint id = 0; u64 frame = 0; bool pending = false; };
+static GPUFrameQuery sGPUQueries[8];
+static int sGPUWrite, sGPURead, sGPUActive = -1;
+static u64 sGPUFrame;
+static bool GPUProfileEnabled() {
+  static const bool enabled = [] { const char *value = getenv("PLATINUM_GPU_TRACE"); return value && *value == '1'; }();
+  return enabled && SIM_ProfileEnabled();
+}
+static void EndGPUProfile() {
+  if (!GPUProfileEnabled()) return;
+  if (sGPUActive >= 0) {
+    glEndQuery(GL_TIME_ELAPSED);
+    sGPUQueries[sGPUActive].pending = true;
+    sGPUWrite = (sGPUActive + 1) % 8;
+    sGPUActive = -1;
+  }
+  SIM_ProfileSet(SIM_PROFILE_GPU_NS, 0);
+  GPUFrameQuery &query = sGPUQueries[sGPURead];
+  if (query.pending) {
+    GLint ready = 0;
+    glGetQueryObjectiv(query.id, GL_QUERY_RESULT_AVAILABLE, &ready);
+    if (ready) {
+      GLuint64 elapsed = 0;
+      glGetQueryObjectui64v(query.id, GL_QUERY_RESULT, &elapsed);
+      SIM_ProfileSet(SIM_PROFILE_GPU_NS, elapsed);
+      SIM_ProfileSet(SIM_PROFILE_GPU_FRAME, query.frame);
+      query.pending = false;
+      sGPURead = (sGPURead + 1) % 8;
+    }
+  }
+  sGPUFrame++;
+}
+static void BeginGPUProfile() {
+  if (!GPUProfileEnabled() || sGPUQueries[sGPUWrite].pending) return;
+  GPUFrameQuery &query = sGPUQueries[sGPUWrite];
+  if (!query.id) glGenQueries(1, &query.id);
+  query.frame = sGPUFrame;
+  glBeginQuery(GL_TIME_ELAPSED, query.id);
+  sGPUActive = sGPUWrite;
 }
 
 u8 bgtex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
@@ -1661,21 +1710,33 @@ void *SIM_Render(void *arg) {
 #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(SimRenderZone);
 #endif
-    // Advance game frames and VBlank tasks at the configured fast-forward speed.
-    if (sFastForwardActive || s_SIM_config.capFrameRate) {
-      const u64 frameBudgetNs = sFastForwardActive
-                                   ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)
-                                   : sNormalFrameBudgetNs;
-      WaitForFrameBudget(frameNs, frameBudgetNs);
-    }
-
+    EndGPUProfile();
+    const bool paced = sFastForwardActive || s_SIM_config.capFrameRate;
+    const int swapInterval = SDL_GL_GetSwapInterval();
+    const u64 budget = sFastForwardActive
+                          ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)
+                          : sNormalFrameBudgetNs;
+    const u64 frameStart = (u64)s_SIM_lastFrameEnd.tv_sec * 1000000000 + s_SIM_lastFrameEnd.tv_nsec;
+    u64 deadline = paced ? sFramePacer.target(frameStart, budget, swapInterval) : 0;
+    if (!paced) sFramePacer.reset();
+    const u64 profileWaitStart = SIM_ProfileNow();
+    // With VSync, submit before waiting. A full software wait before swap can
+    // miss a refresh. The post-swap deadline keeps simulation speed bounded on
+    // high-refresh displays and on drivers that ignore the swap interval.
+    if (paced && swapInterval == 0) WaitForFrameDeadline(deadline);
+    const u64 profileSwapStart = SIM_ProfileNow();
     SDL_GL_SwapWindow(window);
+    const u64 profileSwapEnd = SIM_ProfileNow();
+    if (paced && swapInterval != 0) WaitForFrameDeadline(deadline);
+    const u64 profileWaitEnd = SIM_ProfileNow();
+    if (paced) sFramePacer.finish(FrameClockNs());
 
     //Calculate full frametime (after swap)
     clock_gettime(CLOCK_MONOTONIC, &curTime);
     frameNs = ((curTime.tv_sec - s_SIM_lastFrameEnd.tv_sec) * 1000000000) +
               (curTime.tv_nsec - s_SIM_lastFrameEnd.tv_nsec);
     sFullFrameTime = frameNs;
+    SIM_ProfileFrame(sRenderFrameTime, profileSwapStart - profileWaitStart + profileWaitEnd - profileSwapEnd, profileSwapEnd - profileSwapStart, frameNs, SDL_GL_GetSwapInterval(), sEffectiveSpeed);
 
 
     clock_gettime(CLOCK_MONOTONIC, &s_SIM_lastFrameEnd);
@@ -1711,6 +1772,7 @@ void *SIM_Render(void *arg) {
   glCullFace(GL_FRONT);
   glFrontFace(GL_CW);
 
+  BeginGPUProfile();
   return nullptr;
 }
 
@@ -1773,6 +1835,7 @@ int main(int argc, char *argv[]) {
 
   // Start up debug system
   SIM_Dbg_Init();
+  SIM_ProfileInit();
 
   // Load default config
   SIM_Config_LoadDefaults(&s_SIM_config);
@@ -1882,6 +1945,7 @@ int main(int argc, char *argv[]) {
 
   SIM_RenderInit(NULL);
   G3SIM_DrawInit();
+  atexit([] { G3SIM_ClearTextureCache(); });
 
 // Init Sockets (only needed on windows)
 #ifdef SDK_BUILD_WIN64
