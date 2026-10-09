@@ -249,6 +249,9 @@ static void BeginGPUProfile() {
   sGPUActive = sGPUWrite;
 }
 
+static constexpr auto SteamDeckWidth = 1280;
+static constexpr auto SteamDeckHeight = 800;
+
 u8 bgtex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 u8 bg0tex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 u8 bg1tex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
@@ -514,25 +517,39 @@ void *SIM_RenderInit(void *arg) {
   u32 windowHeight;
   u32 windowWidth;
 
-  if (s_SIM_config.windowWidth == 0 || s_SIM_config.windowHeight == 0) {
-    switch (s_SIM_config.screenLayout) {
-    default:
-    case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
-      windowHeight = 576;
-      windowWidth = 1024;
-      break;
-    case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
-      windowHeight = SIM_NDS_SCREEN_HEIGHT * 2 * 2;
-      windowWidth = SIM_NDS_SCREEN_WIDTH * 2;
-      break;
-    case SIM_CONFIG_SCREEN_LAYOUT_HORIZONTAL:
-      windowHeight = SIM_NDS_SCREEN_HEIGHT * 2;
-      windowWidth = SIM_NDS_SCREEN_WIDTH * 2 * 2;
-      break;
-    case SIM_CONFIG_SCREEN_LAYOUT_LARGE:
-      windowHeight = SIM_NDS_SCREEN_HEIGHT * 2 * 2;
-      windowWidth = (SIM_NDS_SCREEN_WIDTH * 2 * 2) + (SIM_NDS_SCREEN_WIDTH * 2);
-      break;
+  bool isSteamDeck = false;
+
+  #ifdef SDK_BUILD_LINUX
+  char * steamDeckEnv = getenv("SteamDeck");
+  if(steamDeckEnv && (strcmp(steamDeckEnv, "1") == 0)) {
+    isSteamDeck = true;
+  }
+  #endif
+
+  if ((s_SIM_config.windowWidth == 0 || s_SIM_config.windowHeight == 0) ) {
+    if(isSteamDeck) {
+      windowHeight = SteamDeckHeight;
+      windowWidth = SteamDeckWidth;
+    } else {
+      switch (s_SIM_config.screenLayout) {
+      default:
+      case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
+        windowHeight = 576;
+        windowWidth = 1024;
+        break;
+      case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
+        windowHeight = SIM_NDS_SCREEN_HEIGHT * 2 * 2;
+        windowWidth = SIM_NDS_SCREEN_WIDTH * 2;
+        break;
+      case SIM_CONFIG_SCREEN_LAYOUT_HORIZONTAL:
+        windowHeight = SIM_NDS_SCREEN_HEIGHT * 2;
+        windowWidth = SIM_NDS_SCREEN_WIDTH * 2 * 2;
+        break;
+      case SIM_CONFIG_SCREEN_LAYOUT_LARGE:
+        windowHeight = SIM_NDS_SCREEN_HEIGHT * 2 * 2;
+        windowWidth = (SIM_NDS_SCREEN_WIDTH * 2 * 2) + (SIM_NDS_SCREEN_WIDTH * 2);
+        break;
+      }
     }
   } else {
     windowHeight = s_SIM_config.windowHeight;
