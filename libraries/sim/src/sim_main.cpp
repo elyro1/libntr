@@ -73,6 +73,7 @@ extern OSThreadInfo OSi_ThreadInfo;
 
 static constexpr u32 s_MaxViewWidth = 448; // 192 * 21 / 9
 static u32 s_WindowViewWidth = 256;
+static float s_BorderPresentationWidth = 256.0f;
 static u32 s_FieldViewWidth = 256;
 static BOOL s_FieldOverlayTiled = FALSE;
 static BOOL s_FieldDarknessMask = FALSE;
@@ -1064,7 +1065,9 @@ static void DrawEngine(BOOL isSub) {
       masterBrightMode);
 
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
-                     singleScreen ? (float)(s_FieldViewWidth > 256 ? s_FieldViewWidth : s_WindowViewWidth) : 256.0f);
+                     singleScreen ? (s_FieldViewWidth > 256 ? (float)s_FieldViewWidth : s_BorderPresentationWidth) : 256.0f);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "borderWidth"),
+                     (float)s_WindowViewWidth);
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldWidth"),
                      (float)s_FieldViewWidth);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldOverlayTiled"),
@@ -1108,7 +1111,7 @@ static void DrawEngine(BOOL isSub) {
     glGenerateMipmap(GL_TEXTURE_2D);
     glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "averagePass"), FALSE);
     glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
-                       (float)s_WindowViewWidth);
+                       s_BorderPresentationWidth);
   }
   DrawScreenQuad();
 
@@ -1296,15 +1299,20 @@ void *SIM_Render(void *arg) {
     windowWidth = windowWidth > 0 ? windowWidth : 1;
     windowHeight = windowHeight > 0 ? windowHeight : 1;
     // Quantize to even logical pixels, keeping the 256px UI exactly centered.
-    s_WindowViewWidth = (u32)fmin(448.0, fmax(256.0,
-        192.0 * windowWidth / windowHeight)) & ~1u;
+    const double windowLogicalWidth = 192.0 * windowWidth / windowHeight;
+    s_WindowViewWidth = (u32)fmin((double)s_MaxViewWidth, fmax(256.0,
+        windowLogicalWidth)) & ~1u;
+    // Native screens retain their capped gradient, but its outer fade fills
+    // the remaining window width without widening the game projection.
+    s_BorderPresentationWidth = windowLogicalWidth > s_MaxViewWidth
+        ? (float)windowLogicalWidth : (float)s_WindowViewWidth;
 
     // Scale the viewport to the correct aspect ratio and center it
     switch (s_SIM_config.screenLayout) {
     default:
     case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
       // Present the width used by this frame's projection; resized width applies next frame.
-      aspectRatio = (float)(s_FieldViewWidth > 256 ? s_FieldViewWidth : s_WindowViewWidth) / SIM_NDS_SCREEN_HEIGHT;
+      aspectRatio = (s_FieldViewWidth > 256 ? (float)s_FieldViewWidth : s_BorderPresentationWidth) / SIM_NDS_SCREEN_HEIGHT;
       break;
     case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
       aspectRatio = 256.0f / 384.0f;

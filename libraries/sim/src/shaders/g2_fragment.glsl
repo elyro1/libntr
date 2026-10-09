@@ -25,6 +25,7 @@ uniform float inMasterBrightFactor;
 uniform int inMasterBrightMode;
 out vec4 color;
 uniform float presentationWidth;
+uniform float borderWidth;
 uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
 uniform bool fieldDarknessMask;
@@ -99,8 +100,8 @@ vec4 sideBackground() {
     vec3 average = sideAverageValid
         ? textureLod(sideAverageTexture, vec2(0.5), 8.0).rgb
         : backdropColor.rgb;
-    float edge = 256.0 / presentationWidth * 0.5;
-    float distance = clamp((abs(fragTexCoord.x - 0.5) - edge) / (0.5 - edge), 0.0, 1.0);
+    float x = abs(fragTexCoord.x - 0.5) * presentationWidth;
+    float distance = clamp((x - 128.0) / max((borderWidth - 256.0) * 0.5, 1.0), 0.0, 1.0);
     float shade = mix(0.55, 0.20, smoothstep(0.0, 1.0, distance));
     return vec4(average * shade, 1.0);
 }
@@ -244,6 +245,14 @@ void main()
         color.r = color.r - (color.r * (inMasterBrightFactor / 16.0));
         color.g = color.g - (color.g * (inMasterBrightFactor / 16.0));
         color.b = color.b - (color.b * (inMasterBrightFactor / 16.0));
+    }
+    if (filler && presentationWidth > borderWidth) {
+        // Match the capped gradient at the join, then reach black with zero
+        // slope at both ends. Apply after master brightness to keep the outer
+        // window edge black during white transitions too.
+        float x = abs(fragTexCoord.x - 0.5) * presentationWidth;
+        float fade = smoothstep(borderWidth * 0.5, presentationWidth * 0.5, x);
+        color.rgb *= 1.0 - fade;
     }
 }
 )""
