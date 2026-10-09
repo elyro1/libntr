@@ -1,7 +1,96 @@
 #include <nitro.h>
+#ifdef SDK_PORT
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#endif
 
 #include "../include/card_spi.h"
 #include "../include/card_common.h"
+
+#ifdef SDK_PORT
+const char *CARD_PortSavePath = "save1.bin";
+
+BOOL CARD_PortSlotHasData(void)
+{
+    FILE *file = fopen(CARD_PortSavePath, "rb");
+    if (!file) return errno != ENOENT;
+    // Erased saves (including the old zero-filled backend's files) are reusable.
+    unsigned char buffer[4096];
+    size_t size;
+    BOOL hasData = FALSE;
+    while ((size = fread(buffer, 1, sizeof(buffer), file)) != 0) {
+        for (size_t i = 0; i < size; i++) {
+            if (buffer[i] != 0 && buffer[i] != 0xff) {
+                hasData = TRUE;
+                break;
+            }
+        }
+        if (hasData) break;
+    }
+    if (ferror(file)) hasData = TRUE;
+    fclose(file);
+    return hasData;
+}
+
+void CARD_PortMigrateLegacySave(void)
+{
+    // Keep the old file intact, and never replace an existing first slot.
+    FILE *source = fopen("save.bin", "rb");
+    if (!source) return;
+    FILE *target = fopen("save1.bin", "wbx");
+    if (!target) {
+        fclose(source);
+        return;
+    }
+    unsigned char buffer[4096];
+    size_t size;
+    BOOL ok = TRUE;
+    while ((size = fread(buffer, 1, sizeof(buffer), source)) != 0) {
+        if (fwrite(buffer, 1, size, target) != size) {
+            ok = FALSE;
+            break;
+        }
+    }
+    if (ferror(source)) ok = FALSE;
+    fclose(source);
+    if (fclose(target) != 0) ok = FALSE;
+    if (!ok) remove("save1.bin");
+}
+
+BOOL CARD_PortReadBackup(u32 offset, void *data, u32 size)
+{
+    // Reading an unused slot must not create a save or expose stale bytes.
+    memset(data, 0xff, size);
+    FILE *file = fopen(CARD_PortSavePath, "rb");
+    if (!file) {
+        BOOL missing = errno == ENOENT;
+        cardi_common.cmd->result = missing ? CARD_RESULT_SUCCESS : CARD_RESULT_NO_RESPONSE;
+        return missing;
+    }
+    BOOL ok = fseek(file, offset, SEEK_SET) == 0;
+    if (ok) {
+        fread(data, 1, size, file);
+        ok = !ferror(file);
+    }
+    if (fclose(file) != 0) ok = FALSE;
+    cardi_common.cmd->result = ok ? CARD_RESULT_SUCCESS : CARD_RESULT_NO_RESPONSE;
+    return ok;
+}
+
+BOOL CARD_PortWriteBackup(u32 offset, const void *data, u32 size)
+{
+    FILE *file = fopen(CARD_PortSavePath, "rb+");
+    if (!file && errno == ENOENT) file = fopen(CARD_PortSavePath, "wb+");
+    BOOL ok = file != NULL;
+    if (file) {
+        ok = fseek(file, offset, SEEK_SET) == 0 && fwrite(data, 1, size, file) == size;
+        if (fclose(file) != 0) ok = FALSE;
+    }
+    cardi_common.cmd->result = ok ? CARD_RESULT_SUCCESS : CARD_RESULT_TIMEOUT;
+    return ok;
+}
+#endif
 
 #if(defined(SDK_ARM9) || defined(SDK_PORT))
 

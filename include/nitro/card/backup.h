@@ -18,6 +18,14 @@ extern  "C"
 {
 #endif
 
+#ifdef SDK_PORT
+extern const char *CARD_PortSavePath;
+BOOL CARD_PortSlotHasData(void);
+void CARD_PortMigrateLegacySave(void);
+BOOL CARD_PortReadBackup(u32 offset, void *data, u32 size);
+BOOL CARD_PortWriteBackup(u32 offset, const void *data, u32 size);
+#endif
+
 #if SDK_VERSION_MAJOR == 5
 #define CARD_BACKUP_TYPE_DEVICE_SHIFT 0
 #define CARD_BACKUP_TYPE_DEVICE_MASK 0xFF
@@ -114,31 +122,9 @@ u32 CARD_GetBackupPageSize(void);
                                    MIDmaCallback callback, void *arg, BOOL is_async)
   {
     #ifdef SDK_PORT
-    FILE * backupFilePtr;
-    backupFilePtr = fopen("save.bin", "rb");
-    if(!backupFilePtr) {
-      // File does not exist. Create the file
-      backupFilePtr = fopen("save.bin", "wb");
-
-      // Zero out the file with the len
-      u8 * buf = (u8*)malloc(len + src);
-      memset(buf, 0, len + src);
-      fwrite(buf, 1, len + src, backupFilePtr);
-      fclose(backupFilePtr);
-      free(buf);
-
-      // Reopen file
-      backupFilePtr = fopen("save.bin", "rb");
-    }
-    fseek(backupFilePtr, src, SEEK_SET);
-    fread(dst, 1, len, backupFilePtr);
-    fclose(backupFilePtr);
-    if( callback != NULL )
-    {
-      callback(arg);
-    }
-
-    return TRUE;
+    BOOL result = CARD_PortReadBackup(src, dst, len);
+    if (callback != NULL) callback(arg);
+    return result;
     #else
     return CARDi_RequestStreamCommand((u32)src, (u32)dst, len,
                                       callback, arg, is_async,
@@ -164,16 +150,9 @@ u32 CARD_GetBackupPageSize(void);
                                     MIDmaCallback callback, void *arg, BOOL is_async)
   {
     #ifdef SDK_PORT
-    FILE * backupFilePtr;
-    backupFilePtr = fopen("save.bin", "rb+");
-    fseek(backupFilePtr, dst, SEEK_SET);
-    fwrite(src, 1, len, backupFilePtr);
-    fclose(backupFilePtr);
-    if( callback != NULL )
-    {
-      callback(arg);
-    }
-    return TRUE;
+    BOOL result = CARD_PortWriteBackup(dst, src, len);
+    if (callback != NULL) callback(arg);
+    return result;
     #else
     return CARDi_RequestStreamCommand((u32)src, (u32)dst, len, callback, arg, is_async,
                                       CARD_REQ_WRITE_BACKUP, CARD_RETRY_COUNT_MAX,
@@ -211,16 +190,9 @@ u32 CARD_GetBackupPageSize(void);
                                              MIDmaCallback callback, void *arg, BOOL is_async)
   {
     #ifdef SDK_PORT
-    FILE * backupFilePtr;
-    backupFilePtr = fopen("save.bin", "rb+");
-    fseek(backupFilePtr, dst, SEEK_SET);
-    fwrite(src, 1, len, backupFilePtr);
-    fclose(backupFilePtr);
-    if( callback != NULL )
-    {
-      callback(arg);
-    }
-    return CARD_RESULT_SUCCESS;
+    BOOL result = CARD_PortWriteBackup(dst, src, len);
+    if (callback != NULL) callback(arg);
+    return result;
     #else
     return CARDi_RequestStreamCommand((u32)src, (u32)dst, len, callback, arg, is_async,
                                       CARD_REQ_WRITE_BACKUP, CARD_RETRY_COUNT_MAX,
