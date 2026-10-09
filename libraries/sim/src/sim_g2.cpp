@@ -1,5 +1,6 @@
 #include <nitro.h>
 #include <simulator/sim.h>
+#include "sim_g2.h"
 #ifdef SDK_BUILD_NX
 #include <glad/glad.h>
 #else
@@ -653,7 +654,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
 
       u8 windowPass = TRUE;
 
-      if (win0Enabled) {
+      if (win0Enabled && !(bgnum == 3 && !isSub && G2SIM_IsFieldMoveCutInWide())) {
         u8 windowRight = win0H & 0b11111111;
         u8 windowLeft = (win0H >> 8) & 0b11111111;
         u8 windowBottom = win0V & 0b11111111;
@@ -748,7 +749,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
 
       u8 windowPass = TRUE;
 
-      if (win0Enabled) {
+      if (win0Enabled && !(bgnum == 3 && !isSub && G2SIM_IsFieldMoveCutInWide())) {
         u8 windowRight = win0H & 0b11111111;
         u8 windowLeft = (win0H >> 8) & 0b11111111;
         u8 windowBottom = win0V & 0b11111111;

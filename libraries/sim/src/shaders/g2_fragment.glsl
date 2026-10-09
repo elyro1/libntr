@@ -28,6 +28,8 @@ uniform float presentationWidth;
 uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
 uniform bool fieldDarknessMask;
+uniform bool fieldMoveCutIn;
+uniform vec4 fieldMoveWindow;
 uniform sampler2DArray fieldParticlesTexture;
 uniform bool fieldParticlesEnabled;
 uniform bool singleScreen;
@@ -37,7 +39,22 @@ uniform bool averagePass;
 vec2 uiCoord;
 vec2 worldCoord;
 
+bool insideFieldMoveWindow() {
+    // Scale only the horizontal reveal. The band keeps its native height.
+    float x = fragTexCoord.x * 256.0;
+    float y = ((topScreen == 1 ? 1.0 : 0.5) - uiCoord.y) * 384.0;
+    // The DS exclusive right edge is 255; cover the final widescreen column.
+    float right = fieldMoveWindow.z == 255.0 ? 256.0 : fieldMoveWindow.z;
+    return (dispcnt & (1 << 13)) != 0 && x >= fieldMoveWindow.x && x < right
+        && y >= fieldMoveWindow.y && y < fieldMoveWindow.w;
+}
+
 vec4 sampleBg(int layer) {
+    if (fieldMoveCutIn && layer == 3) {
+        if (!insideFieldMoveWindow()) return vec4(0.0);
+        // Continue the moving pattern at its original pixel scale.
+        return texture(bgTexture[layer], uiCoord);
+    }
     if (layer == 0 && bg0as3d != 0) {
         vec4 scene = texture(bgTexture[layer], worldCoord);
         // Rendering into transparent black stores premultiplied RGB. Recover
@@ -65,8 +82,10 @@ vec4 sampleBg(int layer) {
 }
 vec4 sampleObj(int layer) {
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) {
-        if (fieldParticlesEnabled && fieldWidth > 256.0 && bg0as3d != 0 && layer < 4)
+        if (fieldParticlesEnabled && fieldWidth > 256.0 && bg0as3d != 0 && layer < 4) {
+            if (fieldMoveCutIn && !insideFieldMoveWindow()) return vec4(0.0);
             return texture(fieldParticlesTexture, vec3(worldCoord, float(layer)));
+        }
         return vec4(0.0);
     }
     return texture(objTexture[layer], uiCoord);
