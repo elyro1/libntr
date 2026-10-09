@@ -21,6 +21,7 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len);
 
 // Main-thread speed publication. The callback snapshots it atomically.
 void SIM_Audio_SetFastForwardMultiplier(float multiplier);
+void SIM_Audio_SetMasterVolume(int volume);
 // Queue timing ownership alongside the usual sound commands.
 void SIM_Audio_SetPlayerFastForward(int playerNo, BOOL enabled);
 void SIM_Audio_SetChannelFastForward(int chNo, BOOL enabled);

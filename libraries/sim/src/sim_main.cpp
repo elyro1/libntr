@@ -239,27 +239,6 @@ static constexpr GLint s_SideAverageTexUnit = 10;
 GLuint s_bgTextureId[4];
 GLuint s_objTextureId[5];
 static GLuint g2TextureId;
-static GLuint g3TextureId1024;
-static GLuint g3TextureId1024x512;
-static GLuint g3TextureId512;
-static GLuint g3TextureId256;
-static GLuint g3TextureId128;
-static GLuint g3TextureId128x64;
-static GLuint g3TextureId128x256;
-static GLuint g3TextureId64;
-static GLuint g3TextureId64x16;
-static GLuint g3TextureId64x32;
-static GLuint g3TextureId64x128;
-static GLuint g3TextureId32;
-static GLuint g3TextureId32x16;
-static GLuint g3TextureId32x64;
-static GLuint g3TextureId32x128;
-static GLuint g3TextureId16;
-static GLuint g3TextureId16x8;
-static GLuint g3TextureId16x32;
-static GLuint g3TextureId16x64;
-static GLuint g3TextureId8;
-static GLuint g3TextureId8x16;
 static GLuint g3RenderTextureId;
 static GLuint g3FogTextureId;
 static GLuint dummyScreenTextureId;
@@ -353,80 +332,6 @@ static SDL_sem *vcountVblankSemaphore;
 
 SDL_Joystick *s_SIM_SDLJoystick = NULL;
 
-GLuint SIM_GetTextureID() {
-  if (s_texImageParam.textureSSize == 8 && s_texImageParam.textureTSize == 16) {
-    return g3TextureId8x16;
-  }
-  if (s_texImageParam.textureSSize == 16) {
-    switch (s_texImageParam.textureTSize) {
-    case 8:
-      return g3TextureId16x8;
-    default:
-    case 16:
-      return g3TextureId16;
-    case 32:
-      return g3TextureId16x32;
-    case 64:
-      return g3TextureId16x64;
-    }
-  }
-  if (s_texImageParam.textureSSize == 32) {
-    switch (s_texImageParam.textureTSize) {
-    case 16:
-      return g3TextureId32x16;
-    default:
-    case 32:
-      return g3TextureId32;
-    case 64:
-      return g3TextureId32x64;
-    case 128:
-      return g3TextureId32x128;
-    }
-  }
-  if (s_texImageParam.textureSSize == 64 &&
-      s_texImageParam.textureTSize == 16) {
-    return g3TextureId64x16;
-  }
-  if (s_texImageParam.textureSSize == 64 &&
-      s_texImageParam.textureTSize == 32) {
-    return g3TextureId64x32;
-  }
-  if (s_texImageParam.textureSSize == 64 &&
-      s_texImageParam.textureTSize == 128) {
-    return g3TextureId64x128;
-  }
-  if (s_texImageParam.textureSSize == 128 &&
-      s_texImageParam.textureTSize == 64) {
-    return g3TextureId128x64;
-  }
-  if (s_texImageParam.textureSSize == 128 &&
-      s_texImageParam.textureTSize == 256) {
-    return g3TextureId128x256;
-  }
-  if (s_texImageParam.textureSSize == 1024 &&
-      s_texImageParam.textureTSize == 512) {
-    return g3TextureId1024x512;
-  }
-  switch (s_texImageParam.textureSSize) {
-  case 8:
-    return g3TextureId8;
-  case 32:
-    return g3TextureId32;
-  case 64:
-    return g3TextureId64;
-  case 128:
-    return g3TextureId128;
-  case 256:
-    return g3TextureId256;
-  case 512:
-    return g3TextureId512;
-  case 1024:
-    return g3TextureId1024;
-  default:
-    return 0;
-  }
-}
-
 static void DrawScreenQuad() {
 #ifdef SDK_TRACY_ENABLE
   TracyCZone(ctx, 1);
@@ -478,6 +383,64 @@ void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id,
   // %s\n",
   //          ( type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "" ),
   //           type, severity, message );
+}
+
+static u32 sPendingInternalResolution;
+
+void SIM_SetInternalResolutionAfterRender(int scale) {
+  sPendingInternalResolution = scale < 1 ? 1 : (scale > 20 ? 20 : scale);
+}
+
+static void ApplyPendingInternalResolution() {
+  if (!sPendingInternalResolution) return;
+  const u32 scale = sPendingInternalResolution;
+  sPendingInternalResolution = 0;
+  if (scale == s_SIM_config.internalResolutionScale) return;
+  GLint maxTextureSize, maxRenderbufferSize;
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+  glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbufferSize);
+  const u32 maxDimension = s_MaxViewWidth > SIM_NDS_SCREEN_HEIGHT * 2
+      ? s_MaxViewWidth : SIM_NDS_SCREEN_HEIGHT * 2;
+  if (maxDimension * scale > (u32)maxTextureSize ||
+      maxDimension * scale > (u32)maxRenderbufferSize) return;
+  GLint texture, renderbuffer, activeTexture;
+  glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+  glActiveTexture(GL_TEXTURE0);
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING, &renderbuffer);
+  for (GLuint id : {g3RenderTextureId, g3FogTextureId}) {
+    glBindTexture(GL_TEXTURE_2D, id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_MaxViewWidth * scale,
+                 SIM_NDS_SCREEN_HEIGHT * 2 * scale, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  }
+  glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+      s_MaxViewWidth * scale, SIM_NDS_SCREEN_HEIGHT * 2 * scale);
+  // New storage has undefined contents; initialize both color attachments and
+  // the depth/stencil buffer before the game starts the next 3D frame.
+  GLint framebuffer, stencilMask;
+  GLboolean depthMask;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+  glGetIntegerv(GL_STENCIL_WRITEMASK, &stencilMask);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+  const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+  glDisable(GL_SCISSOR_TEST);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g3FrameBuffer);
+  const GLfloat clearColor[] = {0, 0, 0, 0};
+  glClearBufferfv(GL_COLOR, 0, clearColor);
+  glClearBufferfv(GL_COLOR, 1, clearColor);
+  glDepthMask(GL_TRUE);
+  glStencilMask(0xff);
+  glClearBufferfi(GL_DEPTH_STENCIL, 0, 1.0f, 0);
+  glDepthMask(depthMask);
+  glStencilMask(stencilMask);
+  if (scissor) glEnable(GL_SCISSOR_TEST);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+  glActiveTexture(activeTexture);
+  s_SIM_config.internalResolutionScale = scale;
+  SIM_Config_SaveConfigFile(&s_SIM_config);
 }
 
 void *SIM_RenderInit(void *arg) {
@@ -653,27 +616,6 @@ void *SIM_RenderInit(void *arg) {
                   SIM_NDS_SCREEN_HEIGHT * 2);
   GenerateTexture(objWindowTextureId, SIM_NDS_SCREEN_WIDTH,
                   SIM_NDS_SCREEN_HEIGHT * 2);
-  GenerateTexture(g3TextureId1024, 1024, 1024);
-  GenerateTexture(g3TextureId1024x512, 1024, 512);
-  GenerateTexture(g3TextureId512, 512, 512);
-  GenerateTexture(g3TextureId256, 256, 256);
-  GenerateTexture(g3TextureId128, 128, 128);
-  GenerateTexture(g3TextureId128x64, 128, 64);
-  GenerateTexture(g3TextureId128x256, 128, 256);
-  GenerateTexture(g3TextureId64, 64, 64);
-  GenerateTexture(g3TextureId64x16, 64, 16);
-  GenerateTexture(g3TextureId64x32, 64, 32);
-  GenerateTexture(g3TextureId64x128, 64, 128);
-  GenerateTexture(g3TextureId32, 32, 32);
-  GenerateTexture(g3TextureId32x16, 32, 16);
-  GenerateTexture(g3TextureId32x64, 32, 64);
-  GenerateTexture(g3TextureId32x128, 32, 128);
-  GenerateTexture(g3TextureId16, 16, 16);
-  GenerateTexture(g3TextureId16x8, 16, 8);
-  GenerateTexture(g3TextureId16x32, 16, 32);
-  GenerateTexture(g3TextureId16x64, 16, 64);
-  GenerateTexture(g3TextureId8, 8, 8);
-  GenerateTexture(g3TextureId8x16, 8, 16);
 
   // 3D Framebuffer render texture
   glGenFramebuffers(1, &g3FrameBuffer);
@@ -1670,6 +1612,7 @@ void *SIM_Render(void *arg) {
     }
 
     SDL_GL_SwapWindow(window);
+    ApplyPendingInternalResolution();
 
     //Calculate full frametime (after swap)
     clock_gettime(CLOCK_MONOTONIC, &curTime);

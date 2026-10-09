@@ -33,7 +33,12 @@ static int IniHandler(void* user, const char* section, const char* name,
 
     // General section
     if(MATCH("General", "InternalResolutionScale")) {
-        config->internalResolutionScale = atoi(value);
+        int scale = atoi(value);
+        config->internalResolutionScale = scale < 1 ? 1 : (scale > 20 ? 20 : scale);
+    }
+    if(MATCH("General", "MasterVolume")) {
+        int volume = atoi(value);
+        config->masterVolume = volume < 0 ? 0 : (volume > 127 ? 127 : volume);
     }
     if(MATCH("General", "WindowHeight")) {
         config->windowHeight = atoi(value);
@@ -364,6 +369,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->swapScreens = FALSE;
     aConfig->vsyncInterval = 1;
     aConfig->capFrameRate = TRUE;
+    aConfig->masterVolume = 127;
     aConfig->fastForwardMultiplier = 5.0f;
 
     aConfig->padSettings.joyAxisDeadzone = 32767 / 4;
@@ -434,6 +440,7 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     
     fprintf(configFile, "[General]\n");
     fprintf(configFile, "InternalResolutionScale=%d\n", aConfig->internalResolutionScale);
+    fprintf(configFile, "MasterVolume=%d\n", aConfig->masterVolume);
     fprintf(configFile, "WindowHeight=%d\n", aConfig->windowHeight);
     fprintf(configFile, "WindowWidth=%d\n", aConfig->windowWidth);
 

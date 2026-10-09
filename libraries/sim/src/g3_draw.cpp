@@ -67,7 +67,27 @@ extern u8 s_SIM_g3tex[4*1024*1024];
 extern GXVRamTex s_SIM_GXVRamTex;
 extern GXVRamTexPltt s_SIM_GXVRamTexPltt;
 
-extern GLuint SIM_GetTextureID();
+
+// The CPU cache supplies decoded pixels. Allocate upload targets only for
+// dimensions actually used, instead of preallocating the old fixed-size pool.
+// Deferred draws still own independent copies of their decoded textures.
+static GLuint SIM_GetTextureID() {
+    static std::unordered_map<u32, GLuint> targets;
+    const u32 width = s_texImageParam.textureSSize;
+    const u32 height = s_texImageParam.textureTSize;
+    const u32 key = (width << 16) | height;
+    GLuint &id = targets[key];
+    glActiveTexture(GL_TEXTURE0);
+    if (!id) {
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    glBindTexture(GL_TEXTURE_2D, id);
+    return id;
+}
 
 static void* getTextureVramBank();
 static void* getTexPlttVramBank();

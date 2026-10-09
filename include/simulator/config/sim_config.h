@@ -53,6 +53,7 @@ typedef struct {
 
 typedef struct {
     u32 internalResolutionScale; /* 3D rendering internal resolution scale factor */
+    u8 masterVolume; /* Master sound volume (0-127) */
     u32 windowWidth; /* Initial width of the window. If set to 0, will use the default width for the screen layout */
     u32 windowHeight; /* Initial height of the window. If set to 0, will use default height for the screen layout */
     SIM_config_screen_layout_type screenLayout; /* DS screen layout */

@@ -1,4 +1,5 @@
 #include "simulator/sim.h"
+#include "simulator/sim_audio.h"
 #include "simulator/sim_gui.hpp"
 
 #include "simulator/imgui/imgui.hpp"
@@ -41,6 +42,17 @@ void AppConfigMain(bool *openState) {
     float fastForwardMultiplier = sConfig->fastForwardMultiplier;
     
     ImGui::Begin("Config", openState);
+
+    int resolution = sConfig->internalResolutionScale;
+    if (ImGui::SliderInt("Internal resolution", &resolution, 1, 20, "%dx NDS")) {
+        SIM_SetInternalResolutionAfterRender(resolution);
+    }
+    int volume = sConfig->masterVolume;
+    if (ImGui::SliderInt("Master volume", &volume, 0, 127)) {
+        sConfig->masterVolume = volume;
+        SIM_Audio_SetMasterVolume(volume);
+        configChanged = true;
+    }
 
     if(ImGui::Combo("Layout", &screenLayout, ScreenLayoutStrings, 4, 4)) {
         configChanged = true;
