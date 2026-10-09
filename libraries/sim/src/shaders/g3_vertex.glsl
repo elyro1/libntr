@@ -4,6 +4,8 @@ R""(
 layout (location = 0) in vec4 position;
 layout (location = 1) in vec2 texCoord;
 layout (location = 2) in vec4 inColor;
+layout (location = 3) in vec3 inDepthPlane;
+flat out vec3 depthPlane;
 
 smooth out vec2 fragTexCoord;
 noperspective out vec4 fragInColor;
@@ -15,6 +17,7 @@ void main()
     // for perspective-correct UVs while retaining the emulated depth value.
     gl_Position = vec4(position.xyz * position.w, position.w);
     coords = vec4(position.x, position.y, position.z, 1.0);
+    depthPlane = inDepthPlane;
     fragTexCoord = vec2(texCoord.x, texCoord.y);
     fragInColor = inColor;
 }

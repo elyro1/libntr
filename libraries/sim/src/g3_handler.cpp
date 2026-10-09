@@ -1698,15 +1698,6 @@ void G3SIM_SubmitPolygon(G3SIM_FxVtx_t *fxVerts, int numVerts)
         return;
     }
 
-    // Determine the common shift used for the emulated W-buffer depth.
-    u32 wsize = 0;
-    for(int i = 0; i < numVerts; i++) {
-        u32 w = clipped[i].w;
-        while(wsize < 32 && (w >> wsize)) {
-            wsize += 4;
-        }
-    }
-
     G3SIM_Vertex_t glVerts[8];
     for(int i = 0; i < numVerts; i++) {
         const G3SIM_FxVtx_t &v = clipped[i];
@@ -1721,10 +1712,16 @@ void G3SIM_SubmitPolygon(G3SIM_FxVtx_t *fxVerts, int numVerts)
         out.b = v.b;
         out.a = v.a;
 
-        s64 z = ((((s64)v.z * 0x4000) / v.w) + 0x3FFF) * 0x200;
-        if(s_SIM_useWBuffer) {
-            z = wsize < 16 ? v.w : (v.w >> (wsize - 16)) << (wsize - 16);
+        if(!s_SIM_useWBuffer) {
+            // Keep continuous vertex Z. Rounding Z/W to 15 bits before
+            // interpolation erases the tiny gaps between map foliage faces.
+            out.z = (float)((double)v.z / v.w);
+            if(out.z < -1.0f) out.z = -1.0f;
+            if(out.z > 1.0f) out.z = 1.0f;
+            continue;
         }
+        s64 z = v.w;
+        // Preserve W; its depth is evaluated from the reciprocal-W plane.
         if(z < 0) {
             z = 0;
         } else if(z > 0xFFFFFF) {
@@ -1733,9 +1730,34 @@ void G3SIM_SubmitPolygon(G3SIM_FxVtx_t *fxVerts, int numVerts)
         out.z = ((float)z / 16777215.0f) * 2.0f - 1.0f;
     }
 
-    // Clipping may turn a quad into a pentagon. A triangle fan preserves its
-    // winding and attributes; OpenGL handles the remaining viewport clipping.
+    // Clipping may turn a quad into a pentagon. Compute depth per triangle
+    // so nonplanar quads retain the same triangulation as their visible mesh.
     for(int i = 1; i < numVerts - 1; i++) {
+        // Solve the depth plane in clip space: reciprocal W uses a constant
+        // RHS, while Z uses vertex clip Z. Pixel evaluation gives adjacent
+        // coplanar faces the same depth in both buffer modes.
+        float depthPlane[3] = {};
+        const auto &p = clipped[0];
+        const auto &q = clipped[i];
+        const auto &r = clipped[i + 1];
+        double a = (double)q.y * r.w - (double)q.w * r.y;
+        double b = (double)q.w * r.x - (double)q.x * r.w;
+        double c = (double)q.x * r.y - (double)q.y * r.x;
+        double determinant = p.x * a + p.y * b + p.w * c;
+        if(determinant != 0) {
+            double dp = s_SIM_useWBuffer ? FX32_ONE : p.z;
+            double dq = s_SIM_useWBuffer ? FX32_ONE : q.z;
+            double dr = s_SIM_useWBuffer ? FX32_ONE : r.z;
+            depthPlane[0] = (float)((dp*a + dq*((double)r.y*p.w - (double)r.w*p.y) +
+                dr*((double)p.y*q.w - (double)p.w*q.y)) / determinant);
+            depthPlane[1] = (float)((dp*b + dq*((double)r.w*p.x - (double)r.x*p.w) +
+                dr*((double)p.w*q.x - (double)p.x*q.w)) / determinant);
+            depthPlane[2] = (float)((dp*c + dq*((double)r.x*p.y - (double)r.y*p.x) +
+                dr*((double)p.x*q.y - (double)p.y*q.x)) / determinant);
+        }
+        memcpy(glVerts[0].depthPlane, depthPlane, sizeof(depthPlane));
+        memcpy(glVerts[i].depthPlane, depthPlane, sizeof(depthPlane));
+        memcpy(glVerts[i + 1].depthPlane, depthPlane, sizeof(depthPlane));
         G3SIM_AddVtx(&glVerts[0]);
         G3SIM_AddVtx(&glVerts[i]);
         G3SIM_AddVtx(&glVerts[i + 1]);

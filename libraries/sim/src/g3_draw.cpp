@@ -38,7 +38,7 @@ typedef struct {
 } g3_fog_state_t;
 
 typedef struct {
-	float zIdx;
+	u8 useWBuffer;
 	GLuint textureId;
 	G3SIM_PolygonAttr_t polygonAttr;
 	g3_fog_state_t fog;
@@ -63,6 +63,7 @@ static GLuint s_G3DrawVertexBuffer;
 extern G3SIM_TexImageParam_t s_texImageParam;
 extern G3SIM_PolygonAttr_t s_curPolygonAttr;
 extern GLuint g3shaderProgramID;
+extern u8 s_SIM_useWBuffer;
 extern u8 s_SIM_g3tex[4*1024*1024];
 extern GXVRamTex s_SIM_GXVRamTex;
 extern GXVRamTexPltt s_SIM_GXVRamTexPltt;
@@ -159,10 +160,20 @@ void G3SIM_AddVtx(G3SIM_Vertex_t * vtx)
 	return;
 }
 
+static void G3SIM_ApplyDepthViewport()
+{
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "depthViewport"),
+        viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
 void G3SIM_DrawArray()
 {
 	if( s_G3DrawCurVertIdx != 0 )
 	{
+		G3SIM_ApplyDepthViewport();
+		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), s_SIM_useWBuffer);
 		glBindVertexArray(s_G3DrawVertexArray);
 		glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
 		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx, s_G3DrawVerts);
@@ -190,14 +201,18 @@ void G3SIM_DrawInit()
 	glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
 	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
 	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, x));
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, s));
 	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, r));
+
+	glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void*)offsetof(G3SIM_Vertex_t, depthPlane));
 
 	glBindVertexArray(0);
 	glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
 	glDisableVertexAttribArray(2);
+	glDisableVertexAttribArray(3);
 }
 
 static void G3SIM_ApplyFog(const g3_fog_state_t &fog)
@@ -414,6 +429,7 @@ void G3SIM_FlushArray()
 		}
 
 		item->fog = fog;
+		item->useWBuffer = s_SIM_useWBuffer;
 
 		//Copy over the polygonattr
 		memcpy(&item->polygonAttr, &s_curPolygonAttr, sizeof(G3SIM_PolygonAttr_t));
@@ -452,6 +468,8 @@ void G3SIM_DrawItems()
 	glStencilMask(0x7f);
 	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
+	G3SIM_ApplyDepthViewport();
+
 	//Draws all the translucent objects that were deferred to the end of the frame.
 	for(int i=0; i<s_G3DrawItemListCount; i++) {
 		g3_draw_item_t * item = &s_G3DrawItemList[i];
@@ -473,6 +491,7 @@ void G3SIM_DrawItems()
 		GLint polygonModeLoc = glGetUniformLocation(g3shaderProgramID, "polygonMode");
 		glProgramUniform1i(g3shaderProgramID, polygonModeLoc, item->polygonAttr.polygonMode);
 
+		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), item->useWBuffer);
 		G3SIM_ApplyFog(item->fog);
 		G3SIM_ApplyPolygonRasterState(item->polygonAttr);
 		glDepthMask(item->polygonAttr.translucentDepth ? GL_TRUE : GL_FALSE);

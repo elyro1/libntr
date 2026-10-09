@@ -16,6 +16,8 @@ typedef struct {
 	GLfloat y;
 	GLfloat z;
 	GLfloat w;
+	// NDC Z or reciprocal clip-W plane, according to the buffer mode.
+	GLfloat depthPlane[3];
 	//TexCoord
 	GLfloat s;
 	GLfloat t;

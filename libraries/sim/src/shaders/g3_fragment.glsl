@@ -4,6 +4,9 @@ R""(
 uniform sampler2D myTexture;
 uniform int useTexture;
 uniform int polygonMode;
+uniform int useWBuffer;
+uniform vec4 depthViewport;
+flat in vec3 depthPlane;
 // 0: all pixels, 1: opaque pixels, 2: translucent pixels.
 uniform int alphaPass;
 uniform int useFog;
@@ -18,6 +21,21 @@ layout (location = 1) out vec4 fogData;
 
 void main()
 {
+    // Evaluate a common plane at the pixel position so coplanar triangles
+    // agree on depth. Z stays affine; W is recovered from reciprocal clip W.
+    float depth = gl_FragCoord.z;
+    float reciprocalW = gl_FragCoord.w;
+    if(any(notEqual(depthPlane, vec3(0.0)))) {
+        vec2 ndc = (gl_FragCoord.xy - depthViewport.xy) * 2.0 / depthViewport.zw - 1.0;
+        float planeDepth = dot(depthPlane, vec3(ndc, 1.0));
+        if(useWBuffer == 1) reciprocalW = planeDepth;
+        else depth = clamp(planeDepth * 0.5 + 0.5, 0.0, 1.0);
+    }
+    if(useWBuffer == 1) {
+        depth = clamp((4096.0 / 16777215.0) / reciprocalW, 0.0, 1.0);
+    }
+    gl_FragDepth = depth;
+    float fogDepth = depth * 2.0 - 1.0;
     vec4 shadedColor;
     if( useTexture == 1 ) {
         if(polygonMode == 0) {
@@ -51,13 +69,13 @@ void main()
         float fog_mindist = 0.5;
         float dist = length(coords.xyz);
         float fogFactor = 0.0;
-        if(coords.z < fogDepthBoundary[0]) {
+        if(fogDepth < fogDepthBoundary[0]) {
             
             fogFactor = fogDensity[0];
         } else {
             int foundIdx = 31;
             for(int i=1; i<32; i++) {
-                if(coords.z < fogDepthBoundary[i]) {
+                if(fogDepth < fogDepthBoundary[i]) {
                     foundIdx = i;
                     break;
                 }
@@ -65,7 +83,7 @@ void main()
             if(foundIdx == 31) {
                 fogFactor = fogDensity[foundIdx];
             } else {
-                float interpolationFactor = (fogDepthBoundary[foundIdx-1] - coords.z) / (fogDepthBoundary[foundIdx] - fogDepthBoundary[foundIdx-1]);
+                float interpolationFactor = (fogDepthBoundary[foundIdx-1] - fogDepth) / (fogDepthBoundary[foundIdx] - fogDepthBoundary[foundIdx-1]);
                 fogFactor = (fogDensity[foundIdx - 1] * (interpolationFactor)) + (fogDensity[foundIdx] * (1.0-interpolationFactor));
             }
         }
