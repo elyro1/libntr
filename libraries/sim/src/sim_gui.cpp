@@ -107,6 +107,22 @@ void OpenFileDialog(std::function<void(std::string)> callback) {
 }
 
 void NewFrame() {
+    // Keep the pointer available for settings and layouts with touch input.
+    const bool hideCursor = !sEnabled &&
+        SIM_GetConfigPtr()->screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY &&
+        (SDL_GetWindowFlags(sWindow) & SDL_WINDOW_FULLSCREEN) &&
+        SDL_GetKeyboardFocus() == sWindow;
+    ImGuiIO& io = ImGui::GetIO();
+    if(hideCursor) {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    } else {
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+    }
+    const int cursorState = hideCursor ? SDL_DISABLE : SDL_ENABLE;
+    if(SDL_ShowCursor(SDL_QUERY) != cursorState) {
+        SDL_ShowCursor(cursorState);
+    }
+
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();

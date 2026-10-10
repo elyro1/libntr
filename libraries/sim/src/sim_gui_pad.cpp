@@ -116,6 +116,7 @@ void AppPadMain(bool *openState) {
     KeySettingButton("R   ", 6, sConfig->padSettings.rKey);
     KeySettingButton("GUI ", 25, sConfig->padSettings.guiKey);
     KeySettingButton("Speedup ", 26, sConfig->padSettings.fastForwardKey);
+    KeySettingButton("Fullscreen ", 27, sConfig->padSettings.fullScreenKey);
 
     ImGui::NextColumn();
 

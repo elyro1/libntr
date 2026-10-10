@@ -1485,6 +1485,19 @@ void *SIM_Render(void *arg) {
       }
       if (Event.type == SDL_KEYDOWN) {
         int keyRead = Event.key.keysym.sym;
+        if (keyRead == s_SIM_config.padSettings.fullScreenKey) {
+          if (!Event.key.repeat && SDL_GetKeyboardFocus() == window &&
+              !ImGui::GetIO().WantCaptureKeyboard) {
+            const bool fullScreen = !s_SIM_config.fullScreen;
+            if (SDL_SetWindowFullscreen(window, fullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) == 0) {
+              s_SIM_config.fullScreen = fullScreen;
+              SIM_Config_SaveConfigFile(&s_SIM_config);
+            } else {
+              SDL_Log("Could not toggle fullscreen: %s", SDL_GetError());
+            }
+          }
+          continue;
+        }
         if (keyRead == s_SIM_config.padSettings.aKey) {
           // A Button
           s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111111110;

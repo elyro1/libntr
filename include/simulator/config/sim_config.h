@@ -30,6 +30,7 @@ typedef struct {
     int selectKey;
     int guiKey;
     int fastForwardKey;
+    int fullScreenKey;
 
     // Joystick keys
     int joyAxisDeadzone;
