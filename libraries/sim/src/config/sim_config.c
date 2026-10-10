@@ -46,6 +46,9 @@ static int IniHandler(void* user, const char* section, const char* name,
     if(MATCH("General", "WindowWidth")) {
         config->windowWidth = atoi(value);
     }
+    if(MATCH("General", "FullScreen")) {
+        config->fullScreen = StringToBool(value);
+    }
     if(MATCH("General", "ScreenLayout")) {
         config->screenLayout = StringToScreenLayoutType(value);
     }
@@ -365,6 +368,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->windowHeight = 0;
     aConfig->windowWidth = 0;
 #endif
+    aConfig->fullScreen = FALSE;
     aConfig->screenLayout = SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY;
     aConfig->swapScreens = FALSE;
     aConfig->vsyncInterval = 1;
@@ -443,6 +447,7 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     fprintf(configFile, "MasterVolume=%d\n", aConfig->masterVolume);
     fprintf(configFile, "WindowHeight=%d\n", aConfig->windowHeight);
     fprintf(configFile, "WindowWidth=%d\n", aConfig->windowWidth);
+    fprintf(configFile, "FullScreen=%s\n", BoolToString(aConfig->fullScreen));
 
     const char * screenLayoutString = ScreenLayoutTypeToString(aConfig->screenLayout);
     fprintf(configFile, "ScreenLayout=%s\n", screenLayoutString);
