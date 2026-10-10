@@ -7,4 +7,7 @@ BOOL G2SIM_IsFieldMoveCutInWide(void);
 extern u32 s_FieldSpriteLine[];
 void G2SIM_DrawOBJ( u32 line, u8 isSub, int bgnum, BOOL fieldOnly );
 void G2SIM_PlotPixel(u8 * screenBuf, u8 r, u8 g, u8 b, u32 x, u32 y, BOOL isSub);
+void G2SIM_CaptureScanline(u32 line);
+const u8 *G2SIM_GetWindowMasks(BOOL isSub);
+const u16 *G2SIM_GetScanlineBlend(BOOL isSub);
 #endif

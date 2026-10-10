@@ -16,6 +16,8 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/glad/glad.h>
 #endif
 #include <simulator/sim.h>
+#include <simulator/sim_frame_profile.h>
+#include <simulator/sim_frame_pacer.h>
 #include <simulator/sim_audio.h>
 #include <simulator/sim_net.h>
 #include <simulator/sim_shaders.hpp>
@@ -80,6 +82,10 @@ static BOOL s_FieldDarknessMask = FALSE;
 static BOOL s_FieldMoveCutIn = FALSE;
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
+static GLuint s_WindowMaskTexture;
+static GLuint s_ScanlineBlendTexture;
+static constexpr GLint s_WindowMaskTexUnit = 13;
+static constexpr GLint s_ScanlineBlendTexUnit = 14;
 static u8 s_FieldParticlesPixels[4 * SIM_FIELD_SPRITE_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
@@ -118,6 +124,7 @@ extern "C" void SIM_ResetVirtualTextureAddresses(void) {
   // Finish queued draws before IDs can be reused by a new graphics pipeline.
   G3SIM_FlushArray();
   G3SIM_DrawItems();
+  // Content-keyed immutable textures remain valid across VRAM/address resets.
   std::lock_guard<std::mutex> lock(sVirtualTextureMutex);
   sVirtualTextureIDs.clear();
   memset(sVirtualTextures, 0, sizeof(sVirtualTextures));
@@ -183,17 +190,63 @@ static void UpdateFastForward(SDL_Window *gameWindow) {
   }
 }
 
-static void WaitForFrameBudget(u64 frameNs, u64 budgetNs) {
-  while (frameNs < budgetNs) {
-    const u64 remainingMs = (budgetNs - frameNs) / 1000000;
-    // Sleep most of the wait, then yield until the deadline. A millisecond-only
-    // delay is too coarse to pace the 3.32 ms fast-forward frames accurately.
-    SDL_Delay(remainingMs > 1 ? remainingMs - 1 : 0);
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    frameNs = ((now.tv_sec - s_SIM_lastFrameEnd.tv_sec) * 1000000000) +
-              (now.tv_nsec - s_SIM_lastFrameEnd.tv_nsec);
+static SIM_FramePacer sFramePacer;
+static u64 FrameClockNs() {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (u64)now.tv_sec * 1000000000 + now.tv_nsec;
+}
+static void WaitForFrameDeadline(u64 deadline) {
+  u64 now = FrameClockNs();
+  while (now < deadline) {
+    const u64 remaining = deadline - now;
+    // Coarse sleep, then short yields. Never derive the next deadline from
+    // how late the OS happened to wake this frame.
+    SDL_Delay(remaining > 2000000 ? (remaining / 1000000) - 1 : 0);
+    now = FrameClockNs();
   }
+}
+
+// GPU timer results are read asynchronously; no glFinish or blocking query read.
+struct GPUFrameQuery { GLuint id = 0; u64 frame = 0; bool pending = false; };
+static GPUFrameQuery sGPUQueries[8];
+static int sGPUWrite, sGPURead, sGPUActive = -1;
+static u64 sGPUFrame;
+static bool GPUProfileEnabled() {
+  static const bool enabled = [] { const char *value = getenv("PLATINUM_GPU_TRACE"); return value && *value == '1'; }();
+  return enabled && SIM_ProfileEnabled();
+}
+static void EndGPUProfile() {
+  if (!GPUProfileEnabled()) return;
+  if (sGPUActive >= 0) {
+    glEndQuery(GL_TIME_ELAPSED);
+    sGPUQueries[sGPUActive].pending = true;
+    sGPUWrite = (sGPUActive + 1) % 8;
+    sGPUActive = -1;
+  }
+  SIM_ProfileSet(SIM_PROFILE_GPU_NS, 0);
+  GPUFrameQuery &query = sGPUQueries[sGPURead];
+  if (query.pending) {
+    GLint ready = 0;
+    glGetQueryObjectiv(query.id, GL_QUERY_RESULT_AVAILABLE, &ready);
+    if (ready) {
+      GLuint64 elapsed = 0;
+      glGetQueryObjectui64v(query.id, GL_QUERY_RESULT, &elapsed);
+      SIM_ProfileSet(SIM_PROFILE_GPU_NS, elapsed);
+      SIM_ProfileSet(SIM_PROFILE_GPU_FRAME, query.frame);
+      query.pending = false;
+      sGPURead = (sGPURead + 1) % 8;
+    }
+  }
+  sGPUFrame++;
+}
+static void BeginGPUProfile() {
+  if (!GPUProfileEnabled() || sGPUQueries[sGPUWrite].pending) return;
+  GPUFrameQuery &query = sGPUQueries[sGPUWrite];
+  if (!query.id) glGenQueries(1, &query.id);
+  query.frame = sGPUFrame;
+  glBeginQuery(GL_TIME_ELAPSED, query.id);
+  sGPUActive = sGPUWrite;
 }
 
 u8 bgtex[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
@@ -700,6 +753,21 @@ void *SIM_RenderInit(void *arg) {
   glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
   glActiveTexture(GL_TEXTURE0);
 
+  // Per-scanline windows and color effects shared by every layer.
+  glGenTextures(1, &s_WindowMaskTexture);
+  glActiveTexture(GL_TEXTURE0 + s_WindowMaskTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_WindowMaskTexture);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RG8UI, SIM_FIELD_SPRITE_WIDTH, SIM_NDS_SCREEN_HEIGHT * 2);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glGenTextures(1, &s_ScanlineBlendTexture);
+  glActiveTexture(GL_TEXTURE0 + s_ScanlineBlendTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_ScanlineBlendTexture);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16UI, 1, SIM_NDS_SCREEN_HEIGHT * 2);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glActiveTexture(GL_TEXTURE0);
+
   // Setup G3 Shader Program
   g3shaderProgramID = glCreateProgram();
   CompileVertexShader(myVertexShader, SIM::G3VertexShader);
@@ -762,6 +830,7 @@ static void DrawEngine(BOOL isSub) {
 
   // Get the enabled BGs
   u32 dispcnt = isSub ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT;
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "dispcnt"), dispcnt);
 
   bgEnabled[0] = (dispcnt >> 8) & 0x01;
   bg0as3d = !isSub && ((dispcnt >> 3) & 0x01);
@@ -806,9 +875,6 @@ static void DrawEngine(BOOL isSub) {
   bgPriorities[2] = bg2cnt & (u16)3;
   bgPriorities[3] = bg3cnt & (u16)3;
 
-  // Set up the BGPriorities in the shader
-  glUniform1iv(glGetUniformLocation(g2shaderProgramID, "bgPriorities"), 4,
-               bgPriorities);
 
   // Determine the order to draw the BGs
   bgOrder[0] = 0;
@@ -832,8 +898,6 @@ static void DrawEngine(BOOL isSub) {
     bgPriorities[maxPriorityBG] = 0xFF;
   }
 
-  // Set up the BGOrder in the shader
-  glUniform1iv(glGetUniformLocation(g2shaderProgramID, "bgOrder"), 4, bgOrder);
 
   // Clear out the textures
   for (int i = 0; i < 4; i++) {
@@ -1016,30 +1080,22 @@ static void DrawEngine(BOOL isSub) {
       glGetUniformLocation(g2shaderProgramID, "objWindowTexture"),
       s_objWindowTexUnit);
 
-  // Pass BLDCNT, BLDALPHA, and BLDY value to the shader
-  u16 bldcnt = isSub ? s_reg_G2S_DB_BLDCNT : s_reg_G2_BLDCNT;
-  u16 bldalpha = isSub ? s_reg_G2S_DB_BLDALPHA : s_reg_G2_BLDALPHA;
-  u16 bldy = isSub ? s_reg_G2S_DB_BLDY : s_reg_G2_BLDY;
-  glProgramUniform1i(g2shaderProgramID,
-                     glGetUniformLocation(g2shaderProgramID, "bldcnt"), bldcnt);
-  glProgramUniform1i(g2shaderProgramID,
-                     glGetUniformLocation(g2shaderProgramID, "bldalpha"),
-                     bldalpha);
-  glProgramUniform1i(g2shaderProgramID,
-                     glGetUniformLocation(g2shaderProgramID, "bldy"), bldy);
+  glActiveTexture(GL_TEXTURE0 + s_WindowMaskTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_WindowMaskTexture);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SIM_FIELD_SPRITE_WIDTH,
+                 SIM_NDS_SCREEN_HEIGHT * 2, GL_RG_INTEGER, GL_UNSIGNED_BYTE,
+                 G2SIM_GetWindowMasks(isSub));
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "windowMaskTexture"), s_WindowMaskTexUnit);
+  glActiveTexture(GL_TEXTURE0 + s_ScanlineBlendTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_ScanlineBlendTexture);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, SIM_NDS_SCREEN_HEIGHT * 2,
+                 GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, G2SIM_GetScanlineBlend(isSub));
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "scanlineBlendTexture"), s_ScanlineBlendTexUnit);
 
   int topScreen = dispSel ? !isSub : isSub;
   glProgramUniform1i(g2shaderProgramID,
                      glGetUniformLocation(g2shaderProgramID, "topScreen"),
                      topScreen);
-
-  // Pass DISPCNT and WINOUT to the shader
-  glProgramUniform1i(g2shaderProgramID,
-                     glGetUniformLocation(g2shaderProgramID, "dispcnt"),
-                     dispcnt);
-  u16 winout = isSub ? s_reg_G2S_DB_WINOUT : s_reg_G2_WINOUT;
-  glProgramUniform1i(g2shaderProgramID,
-                     glGetUniformLocation(g2shaderProgramID, "winout"), winout);
 
   // Pass bg0as3d to the shader
   glProgramUniform1i(g2shaderProgramID,
@@ -1598,19 +1654,43 @@ void *SIM_Render(void *arg) {
     memset(bg3stex, 0,
            sizeof(u8) * 4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2);
 
+    // HBlank prepares the registers for the next scanline. Capture both
+    // engines before each callback, with real VCOUNT and HBlank status.
+    const u16 savedDisplayStatus = s_reg_GX_DISPSTAT;
+    for (u32 line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+      s_reg_GX_VCOUNT = line;
+      s_reg_GX_DISPSTAT &= ~(REG_GX_DISPSTAT_HBLK_MASK | REG_GX_DISPSTAT_VBLK_MASK);
+      G2SIM_CaptureScanline(line);
+      s_reg_GX_DISPSTAT |= REG_GX_DISPSTAT_HBLK_MASK;
+      if ((s_reg_GX_DISPSTAT & REG_GX_DISPSTAT_HBI_MASK) && (OS_GetIrqMask() & OS_IE_H_BLANK))
+        OS_IRQTable[OS_IE_H_BLANK - 1]();
+    }
+    const u16 statusMask = REG_GX_DISPSTAT_HBLK_MASK | REG_GX_DISPSTAT_VBLK_MASK;
+    s_reg_GX_DISPSTAT = (s_reg_GX_DISPSTAT & ~statusMask) | (savedDisplayStatus & statusMask);
+    s_reg_GX_VCOUNT = SIM_NDS_SCREEN_HEIGHT;
+
     // Draw MAIN engine
     DrawEngine(FALSE);
 
     // SUB engine
     DrawEngine(TRUE);
 
-    // Run HBlank Interrupt
-    OS_IRQTable[OS_IE_H_BLANK - 1]();
-
     // Run VBlank Interrupt
+    s_reg_GX_DISPSTAT |= REG_GX_DISPSTAT_VBLK_MASK;
     OS_IRQTable[OS_IE_V_BLANK - 1]();
     s_HW_INTR_CHECK_BUF |= 1;
     *((u32 *)HW_VBLANK_COUNT_BUF) = *((u32 *)HW_VBLANK_COUNT_BUF) + 1;
+
+    // HBlank continues during VBlank; battle panels restore their offsets here.
+    for (u32 line = SIM_NDS_SCREEN_HEIGHT; line < 263; line++) {
+      s_reg_GX_VCOUNT = line;
+      s_reg_GX_DISPSTAT |= REG_GX_DISPSTAT_HBLK_MASK;
+      if ((s_reg_GX_DISPSTAT & REG_GX_DISPSTAT_HBI_MASK) && (OS_GetIrqMask() & OS_IE_H_BLANK))
+        OS_IRQTable[OS_IE_H_BLANK - 1]();
+      s_reg_GX_DISPSTAT &= ~REG_GX_DISPSTAT_HBLK_MASK;
+    }
+    s_reg_GX_VCOUNT = SIM_NDS_SCREEN_HEIGHT;
+    s_reg_GX_DISPSTAT = (s_reg_GX_DISPSTAT & ~statusMask) | (savedDisplayStatus & statusMask);
 
     SIM::GUI::Render();
 
@@ -1625,15 +1705,26 @@ void *SIM_Render(void *arg) {
 #ifdef SDK_TRACY_ENABLE
     TracyCZoneEnd(SimRenderZone);
 #endif
-    // Advance game frames and VBlank tasks at the configured fast-forward speed.
-    if (sFastForwardActive || s_SIM_config.capFrameRate) {
-      const u64 frameBudgetNs = sFastForwardActive
-                                   ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)
-                                   : sNormalFrameBudgetNs;
-      WaitForFrameBudget(frameNs, frameBudgetNs);
-    }
-
+    EndGPUProfile();
+    const bool paced = sFastForwardActive || s_SIM_config.capFrameRate;
+    const int swapInterval = SDL_GL_GetSwapInterval();
+    const u64 budget = sFastForwardActive
+                          ? (u64)(sNormalFrameBudgetNs / sEffectiveSpeed)
+                          : sNormalFrameBudgetNs;
+    const u64 frameStart = (u64)s_SIM_lastFrameEnd.tv_sec * 1000000000 + s_SIM_lastFrameEnd.tv_nsec;
+    u64 deadline = paced ? sFramePacer.target(frameStart, budget, swapInterval) : 0;
+    if (!paced) sFramePacer.reset();
+    const u64 profileWaitStart = SIM_ProfileNow();
+    // With VSync, submit before waiting. A full software wait before swap can
+    // miss a refresh. The post-swap deadline keeps simulation speed bounded on
+    // high-refresh displays and on drivers that ignore the swap interval.
+    if (paced && swapInterval == 0) WaitForFrameDeadline(deadline);
+    const u64 profileSwapStart = SIM_ProfileNow();
     SDL_GL_SwapWindow(window);
+    const u64 profileSwapEnd = SIM_ProfileNow();
+    if (paced && swapInterval != 0) WaitForFrameDeadline(deadline);
+    const u64 profileWaitEnd = SIM_ProfileNow();
+    if (paced) sFramePacer.finish(FrameClockNs());
     ApplyPendingInternalResolution();
 
     //Calculate full frametime (after swap)
@@ -1641,6 +1732,7 @@ void *SIM_Render(void *arg) {
     frameNs = ((curTime.tv_sec - s_SIM_lastFrameEnd.tv_sec) * 1000000000) +
               (curTime.tv_nsec - s_SIM_lastFrameEnd.tv_nsec);
     sFullFrameTime = frameNs;
+    SIM_ProfileFrame(sRenderFrameTime, profileSwapStart - profileWaitStart + profileWaitEnd - profileSwapEnd, profileSwapEnd - profileSwapStart, frameNs, SDL_GL_GetSwapInterval(), sEffectiveSpeed);
 
 
     clock_gettime(CLOCK_MONOTONIC, &s_SIM_lastFrameEnd);
@@ -1676,6 +1768,7 @@ void *SIM_Render(void *arg) {
   glCullFace(GL_FRONT);
   glFrontFace(GL_CW);
 
+  BeginGPUProfile();
   return nullptr;
 }
 
@@ -1738,6 +1831,7 @@ int main(int argc, char *argv[]) {
 
   // Start up debug system
   SIM_Dbg_Init();
+  SIM_ProfileInit();
 
   // Load default config
   SIM_Config_LoadDefaults(&s_SIM_config);
@@ -1847,6 +1941,7 @@ int main(int argc, char *argv[]) {
 
   SIM_RenderInit(NULL);
   G3SIM_DrawInit();
+  atexit([] { G3SIM_ClearTextureCache(); });
 
 // Init Sockets (only needed on windows)
 #ifdef SDK_BUILD_WIN64
