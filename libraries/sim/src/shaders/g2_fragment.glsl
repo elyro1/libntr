@@ -8,15 +8,16 @@ uniform bool g3FogAlphaOnly;
 uniform sampler2D bgTexture[4];
 uniform sampler2D objTexture[5]; //The extra element is for OBJs drawn on top of all BGs
 uniform sampler2D objWindowTexture;
-uniform int bgOrder[4];
-uniform int bgPriorities[4];
-uniform int bldcnt;
-uniform int bldalpha;
-uniform int bldy;
+int bgOrder[4];
+int bgPriorities[4];
+uniform usampler2D windowMaskTexture;
+uniform usampler2D scanlineBlendTexture;
+int bldcnt;
+int bldalpha;
+int bldy;
+int windowMask;
 uniform int topScreen;
 uniform vec4 backdropColor;
-uniform int dispcnt;
-uniform int winout;
 uniform int bg0as3d;
 
 smooth in vec2 fragTexCoord;
@@ -38,6 +39,7 @@ vec2 uiCoord;
 vec2 worldCoord;
 
 vec4 sampleBg(int layer) {
+    if ((windowMask & (1 << layer)) == 0) return vec4(0.0);
     if (layer == 0 && bg0as3d != 0) {
         vec4 scene = texture(bgTexture[layer], worldCoord);
         // Rendering into transparent black stores premultiplied RGB. Recover
@@ -64,6 +66,7 @@ vec4 sampleBg(int layer) {
     return texture(bgTexture[layer], uiCoord);
 }
 vec4 sampleObj(int layer) {
+    if ((windowMask & 16) == 0) return vec4(0.0);
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) {
         if (fieldParticlesEnabled && fieldWidth > 256.0 && bg0as3d != 0 && layer < 4)
             return texture(fieldParticlesTexture, vec3(worldCoord, float(layer)));
@@ -92,7 +95,6 @@ void main()
     worldCoord = vec2(0.5 + (fragTexCoord.x - 0.5) * presentationWidth / 448.0, fragTexCoord.y);
     int oamsDrawn = 0;
     int currentBgDrawn = 5; // Backdrop
-    bool objWindowEnabled = ((dispcnt >> 15) & 1) == 1;
     if(topScreen == 1) {
         if(fragTexCoord.t < 0.5){
             discard;
@@ -100,6 +102,30 @@ void main()
     } else {
         if(fragTexCoord.t >= 0.5){
             discard;
+        }
+    }
+    int row = clamp(int(floor(fragTexCoord.y * 384.0)), 0, 383);
+    int column = clamp(int(floor(uiCoord.x * 256.0)) + 96, 0, 447);
+    uvec2 masks = texelFetch(windowMaskTexture, ivec2(column, row), 0).rg;
+    windowMask = int(masks.r);
+    if ((windowMask & 128) != 0 && sampleWindow().a > 0.1)
+        windowMask = int(masks.g);
+    bool effectsEnabled = (windowMask & 32) != 0;
+    uvec4 blend = texelFetch(scanlineBlendTexture, ivec2(0, row), 0);
+    bldcnt = int(blend.r);
+    bldalpha = int(blend.g);
+    bldy = int(blend.b);
+    for (int bg = 0; bg < 4; bg++) {
+        bgPriorities[bg] = (int(blend.a) >> (bg * 2)) & 3;
+        bgOrder[bg] = bg;
+    }
+    // Back to front; lower BG number wins when priorities match.
+    for (int i = 0; i < 3; i++) for (int j = i + 1; j < 4; j++) {
+        int a = bgOrder[i], b = bgOrder[j];
+        if (bgPriorities[a] < bgPriorities[b]
+            || (bgPriorities[a] == bgPriorities[b] && a < b)) {
+            bgOrder[i] = b;
+            bgOrder[j] = a;
         }
     }
     bool filler = singleScreen && fieldWidth == 256.0 && (uiCoord.x < 0.0 || uiCoord.x >= 1.0);
@@ -118,27 +144,14 @@ void main()
             oamsDrawn++;
         }
         
-        // Check obj window
-        if(objWindowEnabled && sampleWindow().a > 0.1)
-        {
-            // Inside the window
-            if(((winout >> (bgNum+8)) & 1) == 0) {
-                continue;
-            }
-        } else if (objWindowEnabled) {
-            // Outside the window
-            if(((winout >> bgNum) & 1) == 0) {
-                continue;
-            }
-        }
         // Draw the current bg
         if(sampleBg(bgNum).a > 0.0) {
             // 3D BG0 uses per-pixel alpha even when it is not selected as a
             // first target in BLDCNT, as in the default battle animation setup.
             bool is3D = bgNum == 0 && bg0as3d != 0;
             bool secondTarget = ((bldcnt >> (8 + currentBgDrawn)) & 1) != 0;
-            if ((is3D && secondTarget)
-                || ((((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1))) {
+            if (effectsEnabled && ((is3D && secondTarget)
+                || ((((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1)))) {
                 // Alpha Blending Mode. bgNum is Target 1.
                 float alphaA = min(16.0, float(bldalpha & 31)) / 16.0;
                 float alphaB = min(16.0, float((bldalpha >> 8) & 31)) / 16.0;
@@ -172,7 +185,7 @@ void main()
                 // second target was an OBJ or the backdrop. Later layers must
                 // blend against it, and the final fallback must not erase it.
                 currentBgDrawn = bgNum;
-            } else if((((bldcnt >> 6) & 0x3) == 2) && ((bldcnt >> bgNum & 1) == 1)) {
+            } else if(effectsEnabled && (((bldcnt >> 6) & 0x3) == 2) && ((bldcnt >> bgNum & 1) == 1)) {
                 // Brightness Increase Mode. bgNum is Target 1.
                 float brightFactor = min(16.0, float(bldy & 31)) / 16.0;
                 //color.r = min(1.0, ( sampleBg(bgNum).r + ((1.0 - sampleBg(bgNum).r)*brightFactor)) );
@@ -183,7 +196,7 @@ void main()
                 color.b = sampleBg(bgNum).b + (1.0 - sampleBg(bgNum).b)*brightFactor;
                 color.a = 1.0;
                 currentBgDrawn = bgNum;
-            } else if((((bldcnt >> 6) & 0x3) == 3) && ((bldcnt >> bgNum & 1) == 1)) {
+            } else if(effectsEnabled && (((bldcnt >> 6) & 0x3) == 3) && ((bldcnt >> bgNum & 1) == 1)) {
                 // Brightness Decrease Mode. bgNum is Target 1.
                 float brightFactor = min(16.0, float(bldy & 31)) / 16.0;
                 color.r = max(0.0, ( sampleBg(bgNum).r - ((sampleBg(bgNum).r)*brightFactor)) );

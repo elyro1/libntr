@@ -1,5 +1,6 @@
 #include <nitro.h>
 #include <simulator/sim.h>
+#include "sim_window.h"
 #ifdef SDK_BUILD_NX
 #include <glad/glad.h>
 #else
@@ -50,6 +51,54 @@ static u8 *bgTexTable[] = {bg0tex, bg1tex, bg2tex, bg3tex};
 static u8 *bgsTexTable[] = {bg0stex, bg1stex, bg2stex, bg3stex};
 static s32 bgAffineX[4];
 static s32 bgAffineY[4];
+
+// RG: rectangular/outside mask and OBJ-inside mask. Include widescreen sides.
+static u8 s_WindowMasks[2][SIM_NDS_SCREEN_HEIGHT * 2 * SIM_FIELD_SPRITE_WIDTH * 2];
+static u32 s_ScanlineOffsets[2][SIM_NDS_SCREEN_HEIGHT][4];
+// RGBA16UI: BLDCNT, BLDALPHA, BLDY, packed BG priorities.
+static u16 s_ScanlineBlend[2][SIM_NDS_SCREEN_HEIGHT * 2 * 4];
+
+const u8 *G2SIM_GetWindowMasks(BOOL isSub) { return s_WindowMasks[isSub]; }
+const u16 *G2SIM_GetScanlineBlend(BOOL isSub) { return s_ScanlineBlend[isSub]; }
+
+void G2SIM_CaptureScanline(u32 line) {
+  for (int engine = 0; engine < 2; engine++) {
+    const SIM_WindowState state = {
+        engine ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT,
+        {engine ? s_reg_G2S_DB_WIN0H : s_reg_G2_WIN0H,
+         engine ? s_reg_G2S_DB_WIN1H : s_reg_G2_WIN1H},
+        {engine ? s_reg_G2S_DB_WIN0V : s_reg_G2_WIN0V,
+         engine ? s_reg_G2S_DB_WIN1V : s_reg_G2_WIN1V},
+        engine ? s_reg_G2S_DB_WININ : s_reg_G2_WININ,
+        engine ? s_reg_G2S_DB_WINOUT : s_reg_G2_WINOUT};
+    const bool top = (s_reg_GX_POWCNT >> 15) ? !engine : engine;
+    const u32 row = (top ? 383 : 191) - line;
+    u8 *mask = &s_WindowMasks[engine][row * SIM_FIELD_SPRITE_WIDTH * 2];
+    for (int x = 0; x < SIM_FIELD_SPRITE_WIDTH; x++) {
+      mask[2 * x] = SIM_WindowMask(state, x - (SIM_FIELD_SPRITE_WIDTH - 256) / 2, line);
+      mask[2 * x + 1] = (state.outside >> 8) & 0x3f;
+    }
+    u16 *blend = &s_ScanlineBlend[engine][row * 4];
+    blend[0] = engine ? s_reg_G2S_DB_BLDCNT : s_reg_G2_BLDCNT;
+    blend[1] = engine ? s_reg_G2S_DB_BLDALPHA : s_reg_G2_BLDALPHA;
+    blend[2] = engine ? s_reg_G2S_DB_BLDY : s_reg_G2_BLDY;
+    const u16 controls[] = {
+        engine ? s_reg_G2S_DB_BG0CNT : s_reg_G2_BG0CNT,
+        engine ? s_reg_G2S_DB_BG1CNT : s_reg_G2_BG1CNT,
+        engine ? s_reg_G2S_DB_BG2CNT : s_reg_G2_BG2CNT,
+        engine ? s_reg_G2S_DB_BG3CNT : s_reg_G2_BG3CNT};
+    const u32 offsets[] = {
+        engine ? s_reg_G2S_DB_BG0OFS : s_reg_G2_BG0OFS,
+        engine ? s_reg_G2S_DB_BG1OFS : s_reg_G2_BG1OFS,
+        engine ? s_reg_G2S_DB_BG2OFS : s_reg_G2_BG2OFS,
+        engine ? s_reg_G2S_DB_BG3OFS : s_reg_G2_BG3OFS};
+    blend[3] = 0;
+    for (int bg = 0; bg < 4; bg++) {
+      blend[3] |= (controls[bg] & 3) << (bg * 2);
+      s_ScanlineOffsets[engine][line][bg] = offsets[bg];
+    }
+  }
+}
 
 static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub);
 static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub);
@@ -468,26 +517,18 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   if (isSub) {
     switch (bgnum) {
     case 0:
-      xoff += (s_reg_G2S_DB_BG0OFS & 0x1ff);
-      yoff += ((s_reg_G2S_DB_BG0OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2S_DB_BG0CNT;
       pixelBuf = bg0stex;
       break;
     case 1:
-      xoff += (s_reg_G2S_DB_BG1OFS & 0x1ff);
-      yoff += ((s_reg_G2S_DB_BG1OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2S_DB_BG1CNT;
       pixelBuf = bg1stex;
       break;
     case 2:
-      xoff += (s_reg_G2S_DB_BG2OFS & 0x1ff);
-      yoff += ((s_reg_G2S_DB_BG2OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2S_DB_BG2CNT;
       pixelBuf = bg2stex;
       break;
     case 3:
-      xoff += (s_reg_G2S_DB_BG3OFS & 0x1ff);
-      yoff += ((s_reg_G2S_DB_BG3OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2S_DB_BG3CNT;
       pixelBuf = bg3stex;
       break;
@@ -499,26 +540,18 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   } else {
     switch (bgnum) {
     case 0:
-      xoff += (s_reg_G2_BG0OFS & 0x1ff);
-      yoff += ((s_reg_G2_BG0OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2_BG0CNT;
       pixelBuf = bg0tex;
       break;
     case 1:
-      xoff += (s_reg_G2_BG1OFS & 0x1ff);
-      yoff += ((s_reg_G2_BG1OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2_BG1CNT;
       pixelBuf = bg1tex;
       break;
     case 2:
-      xoff += (s_reg_G2_BG2OFS & 0x1ff);
-      yoff += ((s_reg_G2_BG2OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2_BG2CNT;
       pixelBuf = bg2tex;
       break;
     case 3:
-      xoff += (s_reg_G2_BG3OFS & 0x1ff);
-      yoff += ((s_reg_G2_BG3OFS >> 16) & 0x1ff);
       bgcnt = s_reg_G2_BG3CNT;
       pixelBuf = bg3tex;
       break;
@@ -535,6 +568,10 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   } else {
     dispcnt = s_reg_GX_DISPCNT;
   }
+
+  const u32 offset = s_ScanlineOffsets[isSub][line][bgnum];
+  xoff += offset & 0x1ff;
+  yoff += (offset >> 16) & 0x1ff;
 
   u16 *curpal;
   u16 *pal;
@@ -637,38 +674,8 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
         }
       }
 
-      // Determine if we are inside/outside the window, and if the current bg
-      // should be drawn based on that
-      u8 win0Enabled = (dispcnt >> 13) & 1;
-      u8 win1Enabled = (dispcnt >> 14) & 1;
 
-      u16 win0H = isSub ? s_reg_G2S_DB_WIN0H : s_reg_G2_WIN0H;
-      u16 win1H = isSub ? s_reg_G2S_DB_WIN1H : s_reg_G2_WIN1H;
-
-      u16 win0V = isSub ? s_reg_G2S_DB_WIN0V : s_reg_G2_WIN0V;
-      u16 win1V = isSub ? s_reg_G2S_DB_WIN1V : s_reg_G2_WIN1V;
-
-      u16 winIn = isSub ? s_reg_G2S_DB_WININ : s_reg_G2_WININ;
-      u16 winOut = isSub ? s_reg_G2S_DB_WINOUT : s_reg_G2_WINOUT;
-
-      u8 windowPass = TRUE;
-
-      if (win0Enabled) {
-        u8 windowRight = win0H & 0b11111111;
-        u8 windowLeft = (win0H >> 8) & 0b11111111;
-        u8 windowBottom = win0V & 0b11111111;
-        u8 windowTop = (win0V >> 8) & 0b11111111;
-
-        if (i >= windowLeft && i < windowRight && line >= windowTop &&
-            line < windowBottom) {
-          // Inside window
-          windowPass = ((winIn >> bgnum) & 1);
-        } else {
-          windowPass = ((winOut >> bgnum) & 1);
-        }
-      }
-
-      if (windowPass) {
+      {
         u32 tilexoff = (curtile & 0x0400) ? (7 - (xpos & 0x7)) : (xpos & 0x7);
         color = bgvram[(pixelsaddr + tilexoff) & bgvrammask];
         if (color) {
@@ -732,45 +739,13 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
         color = bgvram[(pixelsaddr + (tilexoff >> 1)) & bgvrammask] & 0x0F;
       }
 
-      // Determine if we are inside/outside the window, and if the current bg
-      // should be drawn based on that
-      u8 win0Enabled = (dispcnt >> 13) & 1;
-      u8 win1Enabled = (dispcnt >> 14) & 1;
-
-      u16 win0H = isSub ? s_reg_G2S_DB_WIN0H : s_reg_G2_WIN0H;
-      u16 win1H = isSub ? s_reg_G2S_DB_WIN1H : s_reg_G2_WIN1H;
-
-      u16 win0V = isSub ? s_reg_G2S_DB_WIN0V : s_reg_G2_WIN0V;
-      u16 win1V = isSub ? s_reg_G2S_DB_WIN1V : s_reg_G2_WIN1V;
-
-      u16 winIn = isSub ? s_reg_G2S_DB_WININ : s_reg_G2_WININ;
-      u16 winOut = isSub ? s_reg_G2S_DB_WINOUT : s_reg_G2_WINOUT;
-
-      u8 windowPass = TRUE;
-
-      if (win0Enabled) {
-        u8 windowRight = win0H & 0b11111111;
-        u8 windowLeft = (win0H >> 8) & 0b11111111;
-        u8 windowBottom = win0V & 0b11111111;
-        u8 windowTop = (win0V >> 8) & 0b11111111;
-
-        if (i >= windowLeft && i < windowRight && line >= windowTop &&
-            line < windowBottom) {
-          // Inside window
-          windowPass = ((winIn >> bgnum) & 1);
-        } else {
-          windowPass = ((winOut >> bgnum) & 1);
-        }
-      }
 
       if (color) {
         u8 r;
         u8 g;
         u8 b;
-        if (windowPass != 0) {
-          SIM_u16ToRGB(curpal[color], &r, &g, &b);
-          G2SIM_PlotPixel(pixelBuf, r, g, b, i, line, isSub);
-        }
+        SIM_u16ToRGB(curpal[color], &r, &g, &b);
+        G2SIM_PlotPixel(pixelBuf, r, g, b, i, line, isSub);
       }
 
       xoff++;
