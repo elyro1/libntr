@@ -63,7 +63,7 @@ void AppConfigMain(bool *openState) {
         configChanged = true;
     }
     if (screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY) {
-        ImGui::TextWrapped("Overworld expands up to 21:9. Bottom-screen controls are hidden in this prototype.");
+        ImGui::TextWrapped("Single screen. Overworld expands up to 21:9.");
     }
     if(screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY && ImGui::Checkbox("Swap Screens", &swapScreens)) {
         configChanged = true;
