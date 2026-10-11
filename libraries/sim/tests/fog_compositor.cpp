@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 static const char *fragmentSource =
 #include "../src/shaders/g2_fragment.glsl"
@@ -70,8 +71,8 @@ int main() {
     glViewport(0, 0, 8, 8);
 
     // Texture units: world, fog, weather overlay, transparent, bottom OBJ.
-    GLuint textures[5];
-    glGenTextures(5, textures);
+    GLuint textures[7];
+    glGenTextures(7, textures);
     unsigned char pixels[5][4] = {
         {32, 128, 32, 255}, {247, 247, 247, 249}, {255, 255, 255, 255},
         {0, 0, 0, 0}, {255, 0, 0, 255}
@@ -84,16 +85,32 @@ int main() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
     auto location = [program](const char *name) { return glGetUniformLocation(program, name); };
-    GLint order[] = {1, 0, 2, 3}, priorities[] = {2, 3, 1, 0};
-    glUniform1iv(location("bgOrder"), 4, order);
-    glUniform1iv(location("bgPriorities"), 4, priorities);
+    // The compositor reads window masks and blending registers per scanline.
+    // Enable every layer and color effects for the whole fixture.
+    std::vector<unsigned char> masks(448 * 384 * 2, 63);
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, textures[5]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8UI, 448, 384, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, masks.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glUniform1i(location("windowMaskTexture"), 5);
+    std::vector<unsigned short> blend(384 * 4);
+    for (int row = 0; row < 384; row++) {
+        blend[row * 4 + 1] = 1801; // Route 210: EVA=9, EVB=7.
+        blend[row * 4 + 3] = 2 | (3 << 2) | (1 << 4); // BG priorities.
+    }
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, textures[6]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16UI, 1, 384, 0, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, blend.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glUniform1i(location("scanlineBlendTexture"), 6);
     glUniform1i(location("g3FogTexture"), 1);
-    glUniform1i(location("fieldParticlesTexture"), 5);
+    glUniform1i(location("fieldParticlesTexture"), 7);
     glUniform1i(location("objWindowTexture"), 3);
     glUniform1i(location("bg0as3d"), 1);
     glUniform1f(location("presentationWidth"), 448);
     glUniform1f(location("fieldWidth"), 448);
-    glUniform1i(location("bldalpha"), 1801); // Route 210: EVA=9, EVB=7.
     glUniform4f(location("backdropColor"), 0, 0, 0, 1);
 
     for (int useObj = 0; useObj < 2; useObj++) {
@@ -102,12 +119,19 @@ int main() {
         for (int weatherOverlay = 0; weatherOverlay < 2; weatherOverlay++) {
             GLint backgrounds[] = {0, 3, weatherOverlay ? 2 : 3, 3};
             glUniform1iv(location("bgTexture"), 4, backgrounds);
-            glUniform1i(location("bldcnt"), useObj ? 0x3144 : 0x2144);
-            for (int gym = 0; gym < 2; gym++) {
+            for (int row = 0; row < 384; row++) blend[row * 4] = useObj ? 0x3144 : 0x2144;
+            glActiveTexture(GL_TEXTURE6);
+            glBindTexture(GL_TEXTURE_2D, textures[6]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 384, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, blend.data());
+            // Weather, original gym, fully dark gym, weather again (leaving
+            // the gym), then a fog-free flashlight pixel in the dark gym.
+            for (int fogCase = 0; fogCase < 5; fogCase++) {
+                bool gym = fogCase == 1 || fogCase == 2 || fogCase == 4;
+                bool darkGym = fogCase == 2 || fogCase == 4;
                 float fogAlpha = (gym ? 1.f : 31.f) / 32.f;
-                unsigned char fog[] = {static_cast<unsigned char>(gym ? 8 : 247),
-                    static_cast<unsigned char>(gym ? 8 : 247),
-                    static_cast<unsigned char>(gym ? 8 : 247), 219};
+                unsigned char fogColor = darkGym ? 0 : (gym ? 8 : 247);
+                unsigned char fogDensity = fogCase == 4 ? 0 : (darkGym ? 255 : 219);
+                unsigned char fog[] = {fogColor, fogColor, fogColor, fogDensity};
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, textures[1]);
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fog);
@@ -115,7 +139,7 @@ int main() {
                 glDrawArrays(GL_TRIANGLES, 0, 3);
                 unsigned char result[4];
                 glReadPixels(4, 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result);
-                float density = 219.f / 255.f;
+                float density = fogDensity / 255.f;
                 float alpha = 1.f + (fogAlpha - 1.f) * density;
                 for (int channel = 0; channel < 3; channel++) {
                     float scene = pixels[0][channel] / 255.f;
@@ -124,8 +148,8 @@ int main() {
                     float expected = scene * alpha + underneath * (1.f - alpha);
                     if (weatherOverlay) expected = 9.f / 16.f + scene * 7.f / 16.f;
                     if (std::fabs(result[channel] / 255.f - expected) > .01f) {
-                        std::fprintf(stderr, "FAIL: OBJ=%d overlay=%d gym=%d channel=%d: got %d expected %.3f\n",
-                            useObj, weatherOverlay, gym, channel, result[channel], expected);
+                        std::fprintf(stderr, "FAIL: OBJ=%d overlay=%d fogCase=%d channel=%d: got %d expected %.3f\n",
+                            useObj, weatherOverlay, fogCase, channel, result[channel], expected);
                         return 4;
                     }
                 }
@@ -133,7 +157,7 @@ int main() {
         }
     }
     if (glGetError() != GL_NO_ERROR) return 5;
-    std::puts("PASS: weather and gym fog blend against backdrop/OBJ with and without BG2 overlay");
+    std::puts("PASS: route fog, dark gym, flashlight reveal, and gym-to-weather transition with backdrop/OBJ and BG2 overlay");
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglDestroyContext(display, context);
     eglDestroySurface(display, surface);
