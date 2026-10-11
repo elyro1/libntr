@@ -270,7 +270,7 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
         }
         // Keep effect synthesis resolution at roughly 512 original channel clocks,
         // including at high speed. Resampling an already pitched-up mix loses detail.
-        u32 cycles = std::max(1u, (u32)(512.0 / multiplier));
+        u32 cycles = std::max<u32>(1, (u32)(512.0 / multiplier));
         const double untilTick = std::fmin(s_tickRemaining[0], s_tickRemaining[1] / multiplier);
         if (untilTick < cycles) cycles = (u32)std::ceil(untilTick);
 
