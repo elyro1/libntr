@@ -172,8 +172,10 @@ void main()
             // first target in BLDCNT, as in the default battle animation setup.
             bool is3D = bgNum == 0 && bg0as3d != 0;
             bool secondTarget = ((bldcnt >> (8 + currentBgDrawn)) & 1) != 0;
-            if (effectsEnabled && ((is3D && secondTarget)
-                || ((((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1)))) {
+            // BG0's 3D alpha blending also applies when the window disables
+            // ordinary color effects (the evolution scene uses that setup).
+            if ((is3D && secondTarget) || (effectsEnabled
+                && (((bldcnt >> 6) & 0x3) == 1) && ((bldcnt >> bgNum & 1) == 1))) {
                 // Alpha Blending Mode. bgNum is Target 1.
                 float alphaA = min(16.0, float(bldalpha & 31)) / 16.0;
                 float alphaB = min(16.0, float((bldalpha >> 8) & 31)) / 16.0;
