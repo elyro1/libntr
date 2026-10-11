@@ -394,10 +394,13 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
     }
     u8 iswin = (((attrib[0] >> 10) & 0x3) == 2);
 
-    u32 sprline;
+    u32 sprline = line;
     if ((attrib[0] & 0x1000) && !iswin) {
-    } else {
-      sprline = line;
+      // OBJ mosaic groups scanlines from the screen origin. Even a 1x1
+      // mosaic must sample the current line, rather than an unset value.
+      const u16 mosaic = isSub ? s_reg_G2S_DB_MOSAIC : s_reg_G2_MOSAIC;
+      const u32 mosaicHeight = ((mosaic >> 12) & 0xF) + 1;
+      sprline -= line % mosaicHeight;
     }
 
     if (attrib[0] & 0x0100) {

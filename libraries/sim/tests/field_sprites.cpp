@@ -3,8 +3,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 extern "C" {
 extern volatile uint32_t s_reg_GX_DISPCNT;
+extern volatile uint16_t s_reg_G2_MOSAIC;
 extern unsigned char s_HW_OBJ_VRAM[];
 extern unsigned char s_HW_OAM[];
 void SIM_SetFieldWideSpriteRange(uint32_t,uint32_t,int);
@@ -62,5 +64,29 @@ int main(){
  check(s_FieldSpriteLine[96+7+256]==0,"weather repeat position");
  SIM_SetFieldTiledSpriteRange(1024,0,0);
  check(!G2SIM_HasFieldSprites(),"cleanup on scene exit");
- puts("PASS: left/right cloud continuation, affine sprites, native rendering, UI exclusion, snow repetition and cleanup");
+ // Galactic boss logo cells enable mosaic even before its size increases.
+ // Give every source row a different color to catch repeated/wrong scanlines.
+ for(bool affine : {false, true}) {
+  sprite(80,affine);
+  auto *oam=reinterpret_cast<uint16_t *>(s_HW_OAM);
+  oam[0] |= 0x1000;
+  for(int y=0;y<64;y++) {
+   for(int tile=0;tile<8;tile++) {
+    int color=y%15+1;
+    std::memset(s_HW_OBJ_VRAM+1024+(y/8)*256+tile*32+(y%8)*4,color*17,4);
+   }
+  }
+  for(int mosaicHeight=1;mosaicHeight<=16;mosaicHeight++) {
+   s_reg_G2_MOSAIC=(mosaicHeight-1)<<12;
+   for(int line=48;line<64;line++) {
+    std::memset(OBJLine,0,sizeof OBJLine);
+    G2SIM_DrawOBJ(line,0,0,0);
+    int sourceY=line-line%mosaicHeight-(affine?32:0);
+    check((OBJLine[0][affine?112:80]&255)==unsigned(sourceY%15+1),
+          "mosaic samples initialized scanline for normal and affine sprites");
+   }
+  }
+ }
+ s_reg_G2_MOSAIC=0;
+ puts("PASS: cloud continuation, affine sprites, native rendering, UI exclusion, snow repetition, cleanup and OBJ mosaic scanlines");
 }
