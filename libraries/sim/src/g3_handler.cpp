@@ -336,6 +336,31 @@ static void calculateVtxFx(fx32 * x, fx32 * y, fx32 * z, fx32 * w)
     *w = newVec[3];
 }
 
+// Project rendered vertices in two stages. Quantizing position * projection
+// first makes coplanar foliage disagree across translated map chunks (notably
+// Veilstone's altitude-2 forest). Keep the hardware clip matrix for box tests
+// and register readback, but round each vertex dot product only once.
+static void calculateRenderVtxFx(fx32 *x, fx32 *y, fx32 *z, fx32 *w)
+{
+    fx32 input[4] = {*x, *y, *z, FX32_ONE};
+    const G3SIM_Matrix_t *matrices[2] = {&currentPositionMatrix, &currentProjectionMatrix};
+    for(const G3SIM_Matrix_t *matrix : matrices) {
+        fx32 output[4];
+        for(int i = 0; i < 4; i++) {
+            s64 sum = 0;
+            for(int j = 0; j < 4; j++) {
+                sum += (s64)input[j] * matrix->nums[j][i];
+            }
+            output[i] = (fx32)((sum + (1 << (FX32_SHIFT - 1))) >> FX32_SHIFT);
+        }
+        memcpy(input, output, sizeof(input));
+    }
+    *x = input[0];
+    *y = input[1];
+    *z = input[2];
+    *w = input[3];
+}
+
 static void calculateVtx(float * x, float * y, float * z, float * w)
 {
     float myW = 1.0f;
@@ -1576,7 +1601,7 @@ void G3SIM_Vtx(s16 x, s16 y, s16 z)
     fxZ = z;
     fxW = FX32_ONE;
 
-    calculateVtxFx(&fxX, &fxY, &fxZ, &fxW);
+    calculateRenderVtxFx(&fxX, &fxY, &fxZ, &fxW);
 
     s_g3PolygonVerts[s_G3numInPoly].x = fxX;
     s_g3PolygonVerts[s_G3numInPoly].y = fxY;
