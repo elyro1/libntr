@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -60,16 +61,18 @@ increased by decreasing time_bits, which would reduce resample ratio accuracy.
 
 /** Sample buffer that resamples to output rate and accumulates samples
 until they're read out */
+/* The sixteen-channel mixer can exceed 16-bit amplitude before output
+clipping. Keep both filter products and accumulated samples wide. */
+typedef int64_t buf_t;
+
 struct blip_t
 {
 	fixed_t factor;
 	fixed_t offset;
 	int avail;
 	int size;
-	int integrator;
+	buf_t integrator;
 };
-
-typedef int buf_t;
 
 /* probably not totally portable */
 #define SAMPLES( buf ) ((buf_t*) ((buf) + 1))
@@ -83,8 +86,10 @@ enum { min_sample = -32768 };
 
 #define CLAMP( n ) \
 	{\
-		if ( (short) n != n )\
-			n = ARITH_SHIFT( n, 16 ) ^ max_sample;\
+		if ( n > max_sample )\
+			n = max_sample;\
+		else if ( n < min_sample )\
+			n = min_sample;\
 	}
 
 static void check_assumptions( void )
@@ -217,11 +222,11 @@ int blip_read_samples( blip_t* m, short out [], int count, int stereo )
 		int const step = stereo ? 2 : 1;
 		buf_t const* in  = SAMPLES( m );
 		buf_t const* end = in + count;
-		int sum = m->integrator;
+		buf_t sum = m->integrator;
 		do
 		{
 			/* Eliminate fraction */
-			int s = ARITH_SHIFT( sum, delta_bits );
+			buf_t s = ARITH_SHIFT( sum, delta_bits );
 			
 			sum += *in++;
 			
@@ -231,7 +236,7 @@ int blip_read_samples( blip_t* m, short out [], int count, int stereo )
 			out += step;
 			
 			/* High-pass filter */
-			sum -= s << (delta_bits - bass_shift);
+			sum -= s * ((buf_t) 1 << (delta_bits - bass_shift));
 		}
 		while ( in != end );
 		m->integrator = sum;
@@ -302,30 +307,31 @@ void blip_add_delta( blip_t* m, unsigned time, int delta )
 	short const* rev = bl_step [phase_count - phase];
 	
 	int interp = fixed >> (phase_shift - delta_bits) & (delta_unit - 1);
-	int delta2 = (delta * interp) >> delta_bits;
-	delta -= delta2;
+	buf_t delta1 = delta;
+	buf_t delta2 = (delta1 * interp) >> delta_bits;
+	delta1 -= delta2;
 	
 	/* Fails if buffer size was exceeded */
 	assert( out <= &SAMPLES( m ) [m->size + end_frame_extra] );
 	
-	out [0] += in[0]*delta + in[half_width+0]*delta2;
-	out [1] += in[1]*delta + in[half_width+1]*delta2;
-	out [2] += in[2]*delta + in[half_width+2]*delta2;
-	out [3] += in[3]*delta + in[half_width+3]*delta2;
-	out [4] += in[4]*delta + in[half_width+4]*delta2;
-	out [5] += in[5]*delta + in[half_width+5]*delta2;
-	out [6] += in[6]*delta + in[half_width+6]*delta2;
-	out [7] += in[7]*delta + in[half_width+7]*delta2;
+	out [0] += in[0]*delta1 + in[half_width+0]*delta2;
+	out [1] += in[1]*delta1 + in[half_width+1]*delta2;
+	out [2] += in[2]*delta1 + in[half_width+2]*delta2;
+	out [3] += in[3]*delta1 + in[half_width+3]*delta2;
+	out [4] += in[4]*delta1 + in[half_width+4]*delta2;
+	out [5] += in[5]*delta1 + in[half_width+5]*delta2;
+	out [6] += in[6]*delta1 + in[half_width+6]*delta2;
+	out [7] += in[7]*delta1 + in[half_width+7]*delta2;
 	
 	in = rev;
-	out [ 8] += in[7]*delta + in[7-half_width]*delta2;
-	out [ 9] += in[6]*delta + in[6-half_width]*delta2;
-	out [10] += in[5]*delta + in[5-half_width]*delta2;
-	out [11] += in[4]*delta + in[4-half_width]*delta2;
-	out [12] += in[3]*delta + in[3-half_width]*delta2;
-	out [13] += in[2]*delta + in[2-half_width]*delta2;
-	out [14] += in[1]*delta + in[1-half_width]*delta2;
-	out [15] += in[0]*delta + in[0-half_width]*delta2;
+	out [ 8] += in[7]*delta1 + in[7-half_width]*delta2;
+	out [ 9] += in[6]*delta1 + in[6-half_width]*delta2;
+	out [10] += in[5]*delta1 + in[5-half_width]*delta2;
+	out [11] += in[4]*delta1 + in[4-half_width]*delta2;
+	out [12] += in[3]*delta1 + in[3-half_width]*delta2;
+	out [13] += in[2]*delta1 + in[2-half_width]*delta2;
+	out [14] += in[1]*delta1 + in[1-half_width]*delta2;
+	out [15] += in[0]*delta1 + in[0-half_width]*delta2;
 }
 
 void blip_add_delta_fast( blip_t* m, unsigned time, int delta )
@@ -334,11 +340,12 @@ void blip_add_delta_fast( blip_t* m, unsigned time, int delta )
 	buf_t* out = SAMPLES( m ) + m->avail + (fixed >> frac_bits);
 	
 	int interp = fixed >> (frac_bits - delta_bits) & (delta_unit - 1);
-	int delta2 = delta * interp;
+	buf_t delta1 = delta;
+	buf_t delta2 = delta1 * interp;
 	
 	/* Fails if buffer size was exceeded */
 	assert( out <= &SAMPLES( m ) [m->size + end_frame_extra] );
 	
-	out [7] += delta * delta_unit - delta2;
+	out [7] += delta1 * delta_unit - delta2;
 	out [8] += delta2;
 }
