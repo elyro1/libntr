@@ -32,6 +32,7 @@ uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
 uniform bool fieldDarknessMask;
 uniform bool fieldMoveCutIn;
+uniform bool screenFadeWindows;
 uniform vec4 fieldMoveWindow;
 uniform sampler2DArray fieldParticlesTexture;
 uniform bool fieldParticlesEnabled;
@@ -127,7 +128,14 @@ void main()
         }
     }
     int row = clamp(int(floor(fragTexCoord.y * 384.0)), 0, 383);
-    int column = clamp(int(floor(uiCoord.x * 256.0)) + 96, 0, 447);
+    // Fade windows describe a whole-screen reveal, independently of native UI.
+    // Sample their native mask across the viewport without stretching the scene.
+    float maskX = screenFadeWindows ? fragTexCoord.x : uiCoord.x;
+    int maskPixel = int(floor(maskX * 256.0 + (screenFadeWindows ? 0.0001 : 0.0)));
+    // Fade assets use 255 as their full-width exclusive edge. Include the
+    // outermost column when widening that edge, as the HM cut-in does.
+    if (screenFadeWindows && presentationWidth > 256.0) maskPixel = min(maskPixel, 254);
+    int column = clamp(maskPixel + 96, 0, 447);
     uvec2 masks = texelFetch(windowMaskTexture, ivec2(column, row), 0).rg;
     windowMask = int(masks.r);
     if ((windowMask & 128) != 0 && sampleWindow().a > 0.1)

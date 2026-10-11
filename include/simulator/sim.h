@@ -87,6 +87,8 @@ void SIM_SetFieldOverlayTiled(BOOL enabled);
 void SIM_SetFieldDarknessMask(BOOL enabled);
 // Extend the HM cut-in band without stretching its sprites.
 void SIM_SetFieldMoveCutIn(BOOL enabled);
+// Scale screen-fade window masks to the current viewport, per DS engine.
+void SIM_SetScreenFadeWindows(BOOL main, BOOL sub);
 // Register/unregister a MAIN OBJ VRAM range containing seamless field particles.
 void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled);
 // Continue selected field sprites past the native screen edges without repeating.

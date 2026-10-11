@@ -80,6 +80,7 @@ static u32 s_FieldViewWidth = 256;
 static BOOL s_FieldOverlayTiled = FALSE;
 static BOOL s_FieldDarknessMask = FALSE;
 static BOOL s_FieldMoveCutIn = FALSE;
+static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
 static GLuint s_WindowMaskTexture;
@@ -1155,6 +1156,8 @@ static void DrawEngine(BOOL isSub) {
                      !isSub && s_FieldDarknessMask);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldMoveCutIn"),
                      !isSub && G2SIM_IsFieldMoveCutInWide());
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "screenFadeWindows"),
+                     s_ScreenFadeWindows[isSub]);
   glProgramUniform4f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldMoveWindow"),
                      s_reg_G2_WIN0H >> 8, s_reg_G2_WIN0V >> 8,
                      s_reg_G2_WIN0H & 255, s_reg_G2_WIN0V & 255);
@@ -1305,6 +1308,11 @@ static void Set3DViewport() {
 
 void SIM_SetFieldOverlayTiled(BOOL enabled) {
   s_FieldOverlayTiled = enabled;
+}
+
+void SIM_SetScreenFadeWindows(BOOL main, BOOL sub) {
+  s_ScreenFadeWindows[0] = main;
+  s_ScreenFadeWindows[1] = sub;
 }
 
 void SIM_SetFieldMoveCutIn(BOOL enabled) {
