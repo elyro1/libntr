@@ -163,6 +163,9 @@ void MTX_RotX43_(MtxFx43 * pDst, fx32 sinVal, fx32 cosVal) {
     pDst->a[6] = 0;
     pDst->a[7] = -sinVal;
     pDst->a[8] = cosVal;
+    pDst->a[9] = 0;
+    pDst->a[10] = 0;
+    pDst->a[11] = 0;
 }
 
 void MTX_RotY43_(MtxFx43 * pDst, fx32 sinVal, fx32 cosVal) {
@@ -175,6 +178,9 @@ void MTX_RotY43_(MtxFx43 * pDst, fx32 sinVal, fx32 cosVal) {
     pDst->a[6] = sinVal;
     pDst->a[7] = 0;
     pDst->a[8] = cosVal;
+    pDst->a[9] = 0;
+    pDst->a[10] = 0;
+    pDst->a[11] = 0;
 }
 
 void MTX_RotZ43_(MtxFx43 * pDst, fx32 sinVal, fx32 cosVal) {
@@ -187,6 +193,9 @@ void MTX_RotZ43_(MtxFx43 * pDst, fx32 sinVal, fx32 cosVal) {
     pDst->a[6] = 0;
     pDst->a[7] = 0;
     pDst->a[8] = FX32_ONE;
+    pDst->a[9] = 0;
+    pDst->a[10] = 0;
+    pDst->a[11] = 0;
 }
 #else
 #include <nitro/code16.h>
