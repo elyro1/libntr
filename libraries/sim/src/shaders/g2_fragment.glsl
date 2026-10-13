@@ -3,6 +3,9 @@ R""(
 
 uniform sampler2D myTexture;
 uniform sampler2D g3FogTexture;
+// Blurred 3D emission; strength is zero unless the field opts in this frame.
+uniform sampler2D bloomTexture;
+uniform float bloomStrength;
 uniform float g3FogAlpha;
 uniform bool g3FogAlphaOnly;
 uniform sampler2D bgTexture[4];
@@ -72,6 +75,11 @@ vec4 sampleBg(int layer) {
         vec4 fog = texture(g3FogTexture, worldCoord);
         if (!g3FogAlphaOnly) scene.rgb = mix(scene.rgb, fog.rgb, fog.a);
         scene.a = mix(scene.a, g3FogAlpha, fog.a);
+        if (bloomStrength > 0.0) {
+            // Screen blending keeps bright sources from clipping to white.
+            vec3 glow = min(texture(bloomTexture, worldCoord).rgb * bloomStrength, vec3(1.0));
+            scene.rgb = 1.0 - (1.0 - clamp(scene.rgb, 0.0, 1.0)) * (1.0 - glow);
+        }
         return scene;
     }
     // Field weather/shading overlays blend BG2 over the 3D world. Repeat

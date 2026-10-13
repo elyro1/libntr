@@ -101,14 +101,16 @@ void G3_MultMtx33 (const MtxFx33 *m)
 void G3_Shininess (const u32 *table)
 {
 	SDK_NULL_ASSERT(table);
-    #ifdef SDK_PORT
-    // The renderer has no shininess table; writing the 128 bytes to the one FIFO register would overrun it
-    (void)table;
-    #else
 
+#ifdef SDK_PORT
+    draw_msg_t msg = {0};
+    msg.type = DRAW_CMD_G3_SHININESS;
+    memcpy(msg.data.numsU32, table, 128);
+    SIM_HandleG3Command(&msg);
+#else
 	reg_G3X_GXFIFO = G3OP_SHININESS;
 	GX_SendFifo128B(&table[0], (void *)&reg_G3X_GXFIFO);
-    #endif
+#endif
 }
 
 void G3_MultTransMtx33 (const MtxFx33 *mtx, const VecFx32 *trans)

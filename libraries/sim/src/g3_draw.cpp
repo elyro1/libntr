@@ -1,20 +1,20 @@
 #include <simulator/sim.h>
-#include <simulator/g3_draw.h>
-
-#include <simulator/g3_handler.h>
-#include <simulator/assert.h>
-#include <string.h>
-#include <stddef.h>
-
+#include <algorithm>
+#include <cmath>
+#include <deque>
 #include <nitro.h>
 #include <nitro/gx/g3.h>
 #include <nitro/gx/gx_load.h>
 #include <nitro/gx/gx_vramcnt.h>
+#include <simulator/assert.h>
+#include <simulator/g3_draw.h>
+#include <simulator/g3_handler.h>
+#include <simulator/sim_crc32.h>
+#include <simulator/sim_frame_profile.h>
+#include <stddef.h>
+#include <string.h>
 #include <unordered_map>
 #include <vector>
-#include <algorithm>
-#include <simulator/sim_frame_profile.h>
-#include <simulator/sim_crc32.h>
 
 #ifdef SDK_BUILD_LINUX
 #include <signal.h>
@@ -33,6 +33,8 @@ struct G3Texture {
     u32 width, height, format, color0, refs = 0;
     u64 used;
     std::vector<u8> source, palette;
+    // The color its brightest texels glow in, for water reflections.
+    float glow[3] = { 1, 1, 1 };
 };
 static std::unordered_multimap<u64, G3Texture *> sGPUTextures;
 static u64 sGPUBytes, sSourceBytes, sTextureUse, sUploadedBytes;
@@ -66,6 +68,363 @@ static void G3SIM_TrimTextures(G3Texture *keep) {
     SIM_ProfileSet(SIM_PROFILE_TEXTURE_SOURCE_BYTES, sSourceBytes);
 }
 
+static unsigned sDrawEpoch;
+static int sFieldEffectMode;
+static float sFieldEffectPhase;
+static float sFieldEffectBloom = 1;
+// World geometry (terrain, buildings) as opposed to sprites and overlays;
+// weather such as rain wets only these.
+static int sFieldSurface;
+
+// Water reflections. While a field frame draws, polygons with an emissive
+// field effect (lamps, windows, signs) and water surfaces (mode 27) are
+// recorded in world space, on screen or not. The next frame's water mirrors
+// those lights; world positions keep that one frame of delay invisible.
+struct FieldEmitter {
+    float position[3], color[3], strength, weight;
+};
+struct FieldWater {
+    float min[2], max[2], y;
+};
+extern GLuint g3shaderProgramID;
+static bool sCollectEmitters, sCollectedLastFrame;
+static double sWorldFromClip[9], sWorldFromClipOffset[3];
+static std::vector<FieldEmitter> sPendingEmitters, sEmitters;
+static std::vector<FieldWater> sWater;
+static bool EmissiveFieldMode(int mode)
+{
+    return mode == 9 || mode == 10 || mode == 13 || mode == 14 || mode == 16 || mode == 18 || mode == 20;
+}
+static void ToWorld(const G3SIM_FxVtx_t &v, double world[3])
+{
+    double clip[3] = { v.x / 4096.0, v.y / 4096.0, v.w / 4096.0 };
+    for (int i = 0; i < 3; i++) {
+        world[i] = sWorldFromClipOffset[i];
+        for (int k = 0; k < 3; k++) world[i] += sWorldFromClip[i * 3 + k] * clip[k];
+    }
+}
+// Hands the water shader the reflections of the lights nearest the middle of
+// the screen (on screen or just off it). Each sits on the water in front of
+// its light: right below it, or, for a lamp on a bank within 12 units of the
+// water, 9 units onto the nearest water. It depends only on the light, not on
+// the camera, so it stays put as the camera moves. Lights set back from the
+// water, such as on a building beside it, do not reflect.
+static void UploadReflections()
+{
+    enum { MAX_UPLOAD = 48 };
+    // World = M * (clip x, clip y, clip w) + offset; invert it to project.
+    const double *m = sWorldFromClip;
+    double det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    double inverse[9];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            int a = (j + 1) % 3, b = (j + 2) % 3, c = (i + 1) % 3, d = (i + 2) % 3;
+            inverse[i * 3 + j] = (m[a * 3 + c] * m[b * 3 + d] - m[a * 3 + d] * m[b * 3 + c]) / det;
+        }
+    // Reflections stretch down the screen: from the middle of the view
+    // towards the camera, along the ground.
+    float down[2] = { (float)-m[2], (float)-m[8] };
+    float downLength = std::sqrt(down[0] * down[0] + down[1] * down[1]);
+    if (downLength < 1e-6f) {
+        down[0] = 0;
+        down[1] = 1;
+    } else {
+        down[0] /= downLength;
+        down[1] /= downLength;
+    }
+    std::vector<std::pair<float, int>> order;
+    for (int i = 0; i < (int)sEmitters.size(); i++) {
+        double rel[3], clip[3] = { };
+        for (int k = 0; k < 3; k++) rel[k] = sEmitters[i].position[k] - sWorldFromClipOffset[k];
+        for (int r = 0; r < 3; r++)
+            for (int k = 0; k < 3; k++) clip[r] += inverse[r * 3 + k] * rel[k];
+        if (clip[2] <= 0) continue;
+        double x = clip[0] / clip[2], y = clip[1] / clip[2];
+        if (std::fabs(x) > 2.5 || std::fabs(y) > 2.5) continue;
+        order.emplace_back((float)(x * x + y * y), i);
+    }
+    std::sort(order.begin(), order.end());
+    // Each reflection: its spot on the water (x, z), the light's height above
+    // the water, and its strength.
+    float positions[MAX_UPLOAD * 4] = { }, colors[MAX_UPLOAD * 3] = { };
+    int count = 0;
+    for (int n = 0; n < (int)order.size() && count < MAX_UPLOAD; n++) {
+        const FieldEmitter &e = sEmitters[order[n].second];
+        float best = 12 * 12, spot[2] = { }, waterY = 0;
+        bool found = false;
+        for (const FieldWater &w : sWater) {
+            if (e.position[1] - w.y < 1) continue;
+            float ex = std::min(std::max(e.position[0], w.min[0]), w.max[0]);
+            float ez = std::min(std::max(e.position[2], w.min[1]), w.max[1]);
+            float d = (ex - e.position[0]) * (ex - e.position[0]) + (ez - e.position[2]) * (ez - e.position[2]);
+            if (d > best || (found && d == best)) continue;
+            float inset[2] = { std::min(9.0f, (w.max[0] - w.min[0]) / 2), std::min(9.0f, (w.max[1] - w.min[1]) / 2) };
+            spot[0] = e.position[0] < w.min[0] ? w.min[0] + inset[0] : e.position[0] > w.max[0] ? w.max[0] - inset[0] : e.position[0];
+            spot[1] = e.position[2] < w.min[1] ? w.min[1] + inset[1] : e.position[2] > w.max[1] ? w.max[1] - inset[1] : e.position[2];
+            best = d;
+            waterY = w.y;
+            found = true;
+        }
+        if (!found) continue;
+        positions[count * 4 + 0] = spot[0];
+        positions[count * 4 + 1] = spot[1];
+        positions[count * 4 + 2] = e.position[1] - waterY;
+        positions[count * 4 + 3] = e.strength;
+        for (int c = 0; c < 3; c++) colors[count * 3 + c] = e.color[c];
+        count++;
+    }
+    glProgramUniform4fv(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "emitterPosition"), MAX_UPLOAD, positions);
+    glProgramUniform3fv(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "emitterColor"), MAX_UPLOAD, colors);
+    glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "emitterCount"), count);
+    glProgramUniform2f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "reflectionDown"), down[0], down[1]);
+}
+void G3SIM_SetFieldEmitterCollection(BOOL enabled, const float worldFromClip[9], const float offset[3])
+{
+    sPendingEmitters.clear();
+    if (enabled) {
+        for (int i = 0; i < 9; i++) sWorldFromClip[i] = worldFromClip[i];
+        for (int i = 0; i < 3; i++) sWorldFromClipOffset[i] = offset[i];
+        // Last frame's lights and water, from this frame's camera.
+        if (sCollectedLastFrame) UploadReflections();
+    }
+    sCollectEmitters = enabled;
+    sCollectedLastFrame = false;
+    sEmitters.clear();
+    sWater.clear();
+}
+// Every frame stops collecting; field frames start it again.
+void G3SIM_EndFieldEmitterCollection()
+{
+    sCollectedLastFrame = sCollectEmitters;
+    sCollectEmitters = false;
+}
+void G3SIM_CollectEmitterPolygon(const G3SIM_FxVtx_t *verts, int count)
+{
+    if (!sCollectEmitters)
+        return;
+    if (sFieldEffectMode == 27) {
+        // A water surface, by its extent; only level ones.
+        if (sWater.size() >= 2048) return;
+        FieldWater w = { { 1e9f, 1e9f }, { -1e9f, -1e9f }, 0 };
+        float low = 1e9f, high = -1e9f;
+        for (int i = 0; i < count; i++) {
+            double world[3];
+            ToWorld(verts[i], world);
+            w.min[0] = std::min(w.min[0], (float)world[0]);
+            w.max[0] = std::max(w.max[0], (float)world[0]);
+            w.min[1] = std::min(w.min[1], (float)world[2]);
+            w.max[1] = std::max(w.max[1], (float)world[2]);
+            low = std::min(low, (float)world[1]);
+            high = std::max(high, (float)world[1]);
+        }
+        if (high - low > 2) return;
+        w.y = (low + high) / 2;
+        sWater.push_back(w);
+        return;
+    }
+    if (!EmissiveFieldMode(sFieldEffectMode) || sFieldEffectPhase <= 0.01f || sPendingEmitters.size() >= 4096)
+        return;
+    FieldEmitter emitter = { };
+    for (int i = 0; i < count; i++) {
+        double world[3];
+        ToWorld(verts[i], world);
+        for (int c = 0; c < 3; c++) emitter.position[c] += (float)world[c] / count;
+        emitter.color[0] += verts[i].r / count;
+        emitter.color[1] += verts[i].g / count;
+        emitter.color[2] += verts[i].b / count;
+    }
+    emitter.strength = sFieldEffectPhase * sFieldEffectBloom;
+    emitter.weight = 1;
+    sPendingEmitters.push_back(emitter);
+}
+// Gives the pending polygons their batch's glow color and merges them into
+// clusters about one tile across.
+static void CommitEmitters(const G3Texture *texture)
+{
+    if (sPendingEmitters.empty())
+        return;
+    float color[3];
+    if (sFieldEffectMode == 9 || sFieldEffectMode == 16) {
+        // Lit windows glow warm whatever their glass color.
+        color[0] = 1; color[1] = 0.78f; color[2] = 0.38f;
+    }
+    for (FieldEmitter &pending : sPendingEmitters) {
+        if (sFieldEffectMode != 9 && sFieldEffectMode != 16) {
+            for (int c = 0; c < 3; c++) color[c] = texture ? texture->glow[c] : pending.color[c];
+        }
+        FieldEmitter *cluster = nullptr;
+        for (FieldEmitter &e : sEmitters) {
+            if (std::fabs(e.position[0] - pending.position[0]) < 12 && std::fabs(e.position[2] - pending.position[2]) < 12
+                && std::fabs(e.position[1] - pending.position[1]) < 24) {
+                cluster = &e;
+                break;
+            }
+        }
+        if (!cluster) {
+            if (sEmitters.size() >= 512) continue;
+            FieldEmitter e = pending;
+            for (int c = 0; c < 3; c++) e.color[c] = color[c];
+            sEmitters.push_back(e);
+            continue;
+        }
+        float w = cluster->weight;
+        for (int c = 0; c < 3; c++) {
+            cluster->position[c] = (cluster->position[c] * w + pending.position[c]) / (w + 1);
+            cluster->color[c] = (cluster->color[c] * w + color[c]) / (w + 1);
+        }
+        cluster->strength = std::max(cluster->strength, pending.strength);
+        cluster->weight = w + 1;
+    }
+    sPendingEmitters.clear();
+}
+extern GLuint g3shaderProgramID;
+void G3SIM_SetFieldEffect(int mode, float phase) {
+    G3SIM_SetFieldEmissiveEffect(mode, phase, 1);
+}
+void G3SIM_SetFieldSurface(int surface) {
+    if (surface == sFieldSurface)
+        return;
+    G3SIM_FlushArray();
+    sFieldSurface = surface;
+}
+void G3SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom) {
+    if (mode == sFieldEffectMode && phase == sFieldEffectPhase && bloom == sFieldEffectBloom)
+        return;
+    G3SIM_FlushArray();
+    sFieldEffectMode = mode;
+    sFieldEffectPhase = phase;
+    sFieldEffectBloom = bloom;
+}
+static void ApplyFieldEffect(int mode, float phase, float bloom, int surface) {
+    static GLuint program;
+    static unsigned epoch;
+    static GLint modeLocation, phaseLocation, bloomLocation, surfaceLocation;
+    static int appliedMode = -1, appliedSurface = -1;
+    static float appliedPhase = -1, appliedBloom = -1;
+    if (program != g3shaderProgramID || epoch != sDrawEpoch) {
+        epoch = sDrawEpoch;
+        program = g3shaderProgramID;
+        modeLocation = glGetUniformLocation(program, "fieldEffectMode");
+        phaseLocation = glGetUniformLocation(program, "fieldEffectPhase");
+        bloomLocation = glGetUniformLocation(program, "fieldEmissionWeight");
+        surfaceLocation = glGetUniformLocation(program, "fieldSurface");
+        appliedMode = -1;
+        appliedSurface = -1;
+        appliedPhase = -1;
+        appliedBloom = -1;
+    }
+    // Opaque and deferred draws share this cache; effect changes still apply
+    // in their actual submission order, rather than the model traversal order.
+    if (appliedMode != mode) {
+        glProgramUniform1i(program, modeLocation, mode);
+        appliedMode = mode;
+    }
+    if (appliedPhase != phase) {
+        glProgramUniform1f(program, phaseLocation, phase);
+        appliedPhase = phase;
+    }
+    if (appliedBloom != bloom) {
+        glProgramUniform1f(program, bloomLocation, bloom);
+        appliedBloom = bloom;
+    }
+    if (appliedSurface != surface) {
+        glProgramUniform1i(program, surfaceLocation, surface);
+        appliedSurface = surface;
+    }
+}
+
+extern G3SIM_TexImageParam_t s_texImageParam;
+static void G3SIM_ApplyPolygonRasterState(const G3SIM_PolygonAttr_t &polygon);
+struct WaterTimer {
+    GLuint start, end;
+    unsigned frame;
+};
+static bool sWaterProfiling;
+static unsigned sWaterFrame;
+static float sWaterGpuMs;
+static std::deque<WaterTimer> sWaterPending;
+static std::vector<WaterTimer> sWaterFree;
+static unsigned sWaterResultFrame;
+static double sWaterResultNs;
+void G3SIM_SetWaterProfiling(BOOL enabled)
+{
+    sWaterProfiling = enabled != FALSE;
+}
+float G3SIM_GetWaterGpuMs(void)
+{
+    return sWaterGpuMs;
+}
+static void PollWaterTimers()
+{
+    while (!sWaterPending.empty()) {
+        WaterTimer timer = sWaterPending.front();
+        GLint ready = 0;
+        glGetQueryObjectiv(timer.end, GL_QUERY_RESULT_AVAILABLE, &ready);
+        if (!ready)
+            break;
+        GLuint64 start, end;
+        glGetQueryObjectui64v(timer.start, GL_QUERY_RESULT, &start);
+        glGetQueryObjectui64v(timer.end, GL_QUERY_RESULT, &end);
+        if (timer.frame != sWaterResultFrame) {
+            sWaterResultNs = 0;
+            sWaterResultFrame = timer.frame;
+        }
+        sWaterResultNs += end - start;
+        sWaterPending.pop_front();
+        sWaterFree.push_back(timer);
+        if (sWaterPending.empty() || sWaterPending.front().frame != timer.frame)
+            sWaterGpuMs = (float)(sWaterResultNs / 1000000.0);
+    }
+}
+
+void G3SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection)
+{
+    G3SIM_FlushArray();
+    PollWaterTimers();
+    ++sWaterFrame;
+    const auto savedPolygon = s_curPolygonAttr;
+    const auto savedTexture = s_texImageParam;
+    G3SIM_TexImageParam(0);
+    // Fog enabled: the overlay must carry the scene's fog, not erase it.
+    G3SIM_PolygonAttr((47U << 24) | (30U << 16) | (1U << 15) | (3U << 6));
+    double clipMatrix[4][4] = { };
+    for (int j = 0; j < 4; j++)
+        for (int axis = 0; axis < 4; axis++) {
+            for (int k = 0; k < 3; k++)
+                clipMatrix[j][axis] += view->m[j][k] / 4096.0 * projection->m[k][axis] / 4096.0;
+            if (j == 3)
+                clipMatrix[j][axis] += projection->m[3][axis] / 4096.0;
+        }
+    // One continuous pattern: texture coordinates are world positions in tile
+    // units, so neighbouring tiles join without seams. Each corner carries how
+    // much open water surrounds it, fading the effect out towards the shore.
+    G3SIM_SetFieldEffect(3, phase);
+    for (int index = 0; index < count; index++) {
+        G3SIM_FxVtx_t quad[4] = { };
+        for (int corner = 0; corner < 4; corner++) {
+            bool right = corner == 1 || corner == 2, bottom = corner >= 2;
+            double world[4] = { tiles[index].x / 4096.0 + (right ? 8 : -8), tiles[index].y / 4096.0, tiles[index].z / 4096.0 + (bottom ? 8 : -8), 1 };
+            for (int axis = 0; axis < 4; axis++) {
+                double value = 0;
+                for (int j = 0; j < 4; j++)
+                    value += world[j] * clipMatrix[j][axis];
+                quad[corner].nums[axis] = (fx32)std::llround(value * FX32_ONE);
+            }
+            quad[corner].s = (float)(world[0] / 16);
+            quad[corner].t = (float)(world[2] / 16);
+            quad[corner].r = 1;
+            quad[corner].g = 1;
+            quad[corner].b = 1;
+            quad[corner].a = ((corners[index] >> (corner * 8)) & 255) / 255.0f;
+        }
+        G3SIM_SubmitPolygon(quad, 4);
+    }
+    G3SIM_SetFieldEffect(0, 0);
+    s_curPolygonAttr = savedPolygon;
+    s_texImageParam = savedTexture;
+    G3SIM_ApplyPolygonRasterState(savedPolygon);
+}
+
 // Deferred polygons must retain their own fog state. Flashlight models disable
 // fog, so inheriting the last submitted polygon's uniforms lights the whole gym.
 typedef struct {
@@ -82,6 +441,10 @@ typedef struct {
 	G3Texture *texture;
 	G3SIM_PolygonAttr_t polygonAttr;
 	g3_fog_state_t fog;
+    int fieldEffectMode;
+    float fieldEffectPhase;
+    float fieldEffectBloom;
+    int fieldSurface;
 	G3SIM_TexImageParam_t texImageParam;
 	G3SIM_Vertex_t * verts;
 	u32 vertsCount;
@@ -98,6 +461,26 @@ static u32 s_G3DrawItemListCount = 0;
 static u32 s_G3DrawCurVertIdx = 0;
 static GLuint s_G3DrawVertexArray;
 static GLuint s_G3DrawVertexBuffer;
+// Append draws to unused storage. Rewriting offset zero for every polygon can
+// make the driver wait for the GPU's previous draw, especially at high resolution.
+static constexpr int kStreamVertexCapacity = G3_DRAW_MAX_VERTS * 8;
+static int sStreamVertexCursor;
+static GLint UploadDrawVertices(const G3SIM_Vertex_t *vertices, int count)
+{
+    SIM_assert(count <= kStreamVertexCapacity);
+    glBindVertexArray(s_G3DrawVertexArray);
+    glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
+    if (sStreamVertexCursor + count > kStreamVertexCapacity) {
+        // Orphan exhausted storage; queued draws retain the old backing store.
+        glBufferData(GL_ARRAY_BUFFER, sizeof(G3SIM_Vertex_t) * kStreamVertexCapacity, nullptr, GL_STREAM_DRAW);
+        sStreamVertexCursor = 0;
+    }
+    GLint first = sStreamVertexCursor;
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(G3SIM_Vertex_t) * first,
+        sizeof(G3SIM_Vertex_t) * count, vertices);
+    sStreamVertexCursor += count;
+    return first;
+}
 
 extern G3SIM_TexImageParam_t s_texImageParam;
 extern G3SIM_PolygonAttr_t s_curPolygonAttr;
@@ -211,12 +594,11 @@ void G3SIM_DrawArray()
 {
 	if( s_G3DrawCurVertIdx != 0 )
 	{
+		ApplyFieldEffect(sFieldEffectMode, sFieldEffectPhase, sFieldEffectBloom, sFieldSurface);
 		G3SIM_ApplyDepthViewport();
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), s_SIM_useWBuffer);
-		glBindVertexArray(s_G3DrawVertexArray);
-		glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx, s_G3DrawVerts);
-		glDrawArrays(GL_TRIANGLES,0,s_G3DrawCurVertIdx);
+        GLint first = UploadDrawVertices(s_G3DrawVerts, s_G3DrawCurVertIdx);
+        glDrawArrays(GL_TRIANGLES, first, s_G3DrawCurVertIdx);
 	}
 	return;
 }
@@ -228,13 +610,15 @@ void G3SIM_DrawCleanUp()
 
 void G3SIM_DrawInit()
 {
+    ++sDrawEpoch;
 	glGenVertexArrays(1, &s_G3DrawVertexArray);
 	glBindVertexArray(s_G3DrawVertexArray);
 
 	glGenBuffers(1, &s_G3DrawVertexBuffer);
 
 	glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(s_G3DrawVerts), NULL, GL_DYNAMIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(G3SIM_Vertex_t) * kStreamVertexCapacity, NULL, GL_STREAM_DRAW);
+    sStreamVertexCursor = 0;
 
 
 	glEnableVertexAttribArray(0);
@@ -256,6 +640,18 @@ void G3SIM_DrawInit()
 
 static void G3SIM_ApplyFog(const g3_fog_state_t &fog)
 {
+    static GLuint program;
+    static g3_fog_state_t applied;
+    static unsigned epoch;
+    static bool valid;
+    if (valid && epoch == sDrawEpoch && program == g3shaderProgramID
+        && ((!fog.enabled && !applied.enabled) || memcmp(&fog, &applied, sizeof(fog)) == 0)) {
+        return;
+    }
+    program = g3shaderProgramID;
+    applied = fog;
+    epoch = sDrawEpoch;
+    valid = true;
 	// Set the fog attributes in the shader
 	GLint useFogLoc = glGetUniformLocation(g3shaderProgramID, "useFog");
 	int useFog = fog.enabled;
@@ -437,6 +833,19 @@ static G3Texture *G3SIM_AcquireTexture() {
             case GX_TEXFMT_COMP4x4: G3SIM_DecodeCompressed(vramTex, vramPltt, decoded.data(), texture->width, texture->height); break;
             case GX_TEXFMT_DIRECT: G3SIM_DecodeTexDirect(vramTex, decoded.data(), texture->width, texture->height); break;
             }
+            // Weighted strongly towards the brightest texels: lit glass, bulbs.
+            double sum[3] = { }, weightSum = 0;
+            for (u32 i = 0; i < pixels; i++) {
+                const u8 *texel = &decoded[i * 4];
+                if (!texel[3]) continue;
+                double luma = (texel[0] + 2.0 * texel[1] + texel[2]) / (4 * 255.0), weight = luma * luma * luma * luma;
+                for (int c = 0; c < 3; c++) sum[c] += texel[c] / 255.0 * weight;
+                weightSum += weight;
+            }
+            if (weightSum > 0) {
+                double peak = std::max(sum[0], std::max(sum[1], sum[2]));
+                for (int c = 0; c < 3; c++) texture->glow[c] = (float)(sum[c] / peak);
+            }
             glGenTextures(1, &texture->id);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture->id);
@@ -487,6 +896,7 @@ void G3SIM_FlushArray()
 
 	const u64 textureProfile = SIM_ProfileNow();
 	G3Texture *texture = G3SIM_AcquireTexture();
+	CommitEmitters(texture);
     if (texture) {
 
 		GLint texUnitLoc = glGetUniformLocation(g3shaderProgramID, "myTexture");
@@ -517,53 +927,57 @@ void G3SIM_FlushArray()
 
 
 	// If this is a translucent draw, save it for the end of the frame to render it last
-	if(
-		( s_texImageParam.textureFormat == GX_TEXFMT_A3I5 
-	   || s_texImageParam.textureFormat == GX_TEXFMT_A5I3
-	   || s_curPolygonAttr.alpha < 0.99f )
-	 && s_G3DrawCurVertIdx != 0) {
-		// A3I5/A5I3 textures can contain opaque texels. Draw those with the
-		// opaque scene; defer only their translucent texels for blending.
-		if(s_curPolygonAttr.alphaInt == 31) {
-			glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 1);
-			glDepthMask(GL_TRUE);
-			G3SIM_DrawArray();
-		}
-		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
-		SIM_assert(s_G3DrawItemListCount < G3_DRAW_MAX_ITEMS);
-		g3_draw_item_t * item = &s_G3DrawItemList[s_G3DrawItemListCount];
+        if (
+            (s_texImageParam.textureFormat == GX_TEXFMT_A3I5
+                || s_texImageParam.textureFormat == GX_TEXFMT_A5I3
+                || s_curPolygonAttr.alpha < 0.99f || ((sFieldEffectMode == 8 || sFieldEffectMode == 22 || sFieldEffectMode == 23) && sFieldEffectPhase < 0.999f))
+            && s_G3DrawCurVertIdx != 0) {
+            // A3I5/A5I3 textures can contain opaque texels. Draw those with the
+            // opaque scene; defer only their translucent texels for blending.
+            // Tree atlases whose painted shadows fade (mode 22) split the same way.
+            if (s_curPolygonAttr.alphaInt == 31 && !((sFieldEffectMode == 8 || sFieldEffectMode == 23) && sFieldEffectPhase < 0.999f)) {
+                glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 1);
+                glDepthMask(GL_TRUE);
+                G3SIM_DrawArray();
+            }
+            glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
+            SIM_assert(s_G3DrawItemListCount < G3_DRAW_MAX_ITEMS);
+            g3_draw_item_t *item = &s_G3DrawItemList[s_G3DrawItemListCount];
 
-		memset(item, 0, sizeof(g3_draw_item_t));
+            memset(item, 0, sizeof(g3_draw_item_t));
 
+            if (texture) {
+                item->texture = texture;
+                item->textureId = texture->id;
+                texture->refs++;
+            }
 
-		if (texture) {
-            item->texture = texture;
-            item->textureId = texture->id;
-            texture->refs++;
+            item->fog = fog;
+            item->fieldEffectMode = sFieldEffectMode;
+            item->fieldEffectPhase = sFieldEffectPhase;
+            item->fieldEffectBloom = sFieldEffectBloom;
+            item->fieldSurface = sFieldSurface;
+            item->useWBuffer = s_SIM_useWBuffer;
+
+            // Copy over the polygonattr
+            memcpy(&item->polygonAttr, &s_curPolygonAttr, sizeof(G3SIM_PolygonAttr_t));
+
+            // Copy over the texImageParam
+            memcpy(&item->texImageParam, &s_texImageParam, sizeof(G3SIM_TexImageParam_t));
+
+            // Allocate and copy the verts
+            item->verts = (G3SIM_Vertex_t *)(malloc(sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx));
+            item->vertsCount = s_G3DrawCurVertIdx;
+            memcpy(item->verts, s_G3DrawVerts, sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx);
+
+            s_G3DrawItemListCount++;
+        } else {
+            glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
+            glDepthMask(GL_TRUE);
+            G3SIM_DrawArray();
         }
 
-		item->fog = fog;
-		item->useWBuffer = s_SIM_useWBuffer;
-
-		//Copy over the polygonattr
-		memcpy(&item->polygonAttr, &s_curPolygonAttr, sizeof(G3SIM_PolygonAttr_t));
-
-		//Copy over the texImageParam
-		memcpy(&item->texImageParam, &s_texImageParam, sizeof(G3SIM_TexImageParam_t));
-
-		//Allocate and copy the verts
-		item->verts = (G3SIM_Vertex_t*)(malloc(sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx));
-		item->vertsCount = s_G3DrawCurVertIdx;
-		memcpy(item->verts, s_G3DrawVerts, sizeof(G3SIM_Vertex_t) * s_G3DrawCurVertIdx);
-
-		s_G3DrawItemListCount++;
-	} else {
-		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 0);
-		glDepthMask(GL_TRUE);
-		G3SIM_DrawArray();
-	}
-
-	G3SIM_DrawCleanUp();
+        G3SIM_DrawCleanUp();
 	#ifdef SDK_TRACY_ENABLE
 	TracyCZoneEnd(FlushArrayZone);
 	#endif
@@ -607,16 +1021,40 @@ void G3SIM_DrawItems()
 
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), item->useWBuffer);
 		G3SIM_ApplyFog(item->fog);
+        ApplyFieldEffect(item->fieldEffectMode, item->fieldEffectPhase, item->fieldEffectBloom, item->fieldSurface);
 		G3SIM_ApplyPolygonRasterState(item->polygonAttr);
 		glDepthMask(item->polygonAttr.translucentDepth ? GL_TRUE : GL_FALSE);
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 2);
 
-		glBindVertexArray(s_G3DrawVertexArray);
-		glBindBuffer(GL_ARRAY_BUFFER, s_G3DrawVertexBuffer);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(G3SIM_Vertex_t) * item->vertsCount, item->verts);
-		glDrawArrays(GL_TRIANGLES,0, item->vertsCount);
+        // Field-effect overlays (shadows, light pools, water, cones) keep the
+        // fog of the surface underneath. Their own depth, raised or biased
+        // towards the camera, would otherwise cut less foggy holes into it.
+        bool keepFog = item->fieldEffectMode != 0;
+        if (keepFog) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        GLint first = UploadDrawVertices(item->verts, item->vertsCount);
+                WaterTimer timer = { };
+                bool timed = sWaterProfiling && item->fieldEffectMode == 3 && sWaterPending.size() < 64;
+                if (timed) {
+                    if (!sWaterFree.empty()) {
+                        timer = sWaterFree.back();
+                        sWaterFree.pop_back();
+                    } else {
+                        GLuint queries[2];
+                        glGenQueries(2, queries);
+                        timer.start = queries[0];
+                        timer.end = queries[1];
+                    }
+                    timer.frame = sWaterFrame;
+                    glQueryCounter(timer.start, GL_TIMESTAMP);
+                }
+                glDrawArrays(GL_TRIANGLES, first, item->vertsCount);
+                if (timed) {
+                    glQueryCounter(timer.end, GL_TIMESTAMP);
+                    sWaterPending.push_back(timer);
+                }
+                if (keepFog) glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-		free(item->verts);
+                free(item->verts);
 
 		if(item->textureId != 0) {
 			if (item->texture) item->texture->refs--;

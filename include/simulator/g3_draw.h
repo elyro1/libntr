@@ -3,6 +3,7 @@
 #else
 #include <simulator/glad/glad.h>
 #endif
+#include <nitro/fx/fx_mtx.h>
 #include <nitro/types.h>
 
 #ifndef SIM_G3_DRAW_H
@@ -39,6 +40,16 @@ void G3SIM_DrawInit();
 void G3SIM_ClearTextureCache();
 u32 G3SIM_PrewarmTexture(u32 image, u32 palette);
 void G3SIM_FlushArray();
+void G3SIM_SetFieldEffect(int mode, float phase);
+void G3SIM_SetFieldSurface(int surface);
+void G3SIM_SetFieldEmitterCollection(BOOL enabled, const float worldFromClip[9], const float offset[3]);
+void G3SIM_EndFieldEmitterCollection(void);
+// bloom scales the emission this effect contributes to the bloom pass.
+void G3SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom);
+// corners packs four shore weights per tile (byte i: corner i, clockwise from -x/-z).
+void G3SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection);
+void G3SIM_SetWaterProfiling(BOOL enabled);
+float G3SIM_GetWaterGpuMs(void);
 void G3SIM_DrawItems();
 
 #ifdef __cplusplus

@@ -20,5 +20,13 @@ const char * G2FragmentShader =
 #include "shaders/g2_fragment.glsl"
 ;
 
+const char * BloomVertexShader =
+#include "shaders/bloom_vertex.glsl"
+;
+
+const char * BloomFragmentShader =
+#include "shaders/bloom_fragment.glsl"
+;
+
 }
 

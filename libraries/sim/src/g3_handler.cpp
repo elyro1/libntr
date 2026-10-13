@@ -54,6 +54,22 @@ static G3SIM_Matrix_t currentClipMatrix = {0};
 
 static u8 s_G3LightColor [4][3];
 static float s_G3LightVector[4][3];
+static float sCorrectLightVector[4][3];
+static bool sCorrectLighting = true;
+static bool sUseShininessTable;
+static u8 sShininessTable[128];
+
+// Signed 1.9 fixed point, including the -1.0 endpoint; never narrow to u8.
+static float DecodeLightingComponent(u32 bits) {
+    int value = bits & 0x3ff;
+    if (value & 0x200) value -= 0x400;
+    return value / 512.0f;
+}
+
+void G3SIM_SetLightingCorrection(BOOL enabled) { sCorrectLighting = enabled != FALSE; }
+void G3SIM_Shininess(const u32 *table) {
+    for (int i = 0; i < 128; i++) sShininessTable[i] = (table[i / 4] >> ((i % 4) * 8)) & 255;
+}
 
 u8 s_G3numInPoly = 0;
 u8 s_G3drawPoly = 0;
@@ -869,8 +885,41 @@ void G3SIM_LightColor(u32 data)
     s_G3LightColor[lightNum][2] = lightBlue << 3;
 }
 
+// Scales a transformed lighting vector back to its submitted length and
+// returns the factor the vector matrix had scaled it by. Here Scale in
+// position-and-vector mode also scales the vector matrix (the DS leaves it
+// alone), so models drawn scaled up, such as the map terrain at 32x, used to
+// get normals 32 times too long and lit their faces all or nothing, in
+// patches across rocks.
+static float SoftEdge(float x)
+{
+    float t = (x + 0.35f) / 0.7f;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return t * t * (3 - 2 * t);
+}
+static float KeepSubmittedLength(const float input[3], float vector[3])
+{
+    float submitted = sqrtf(input[0] * input[0] + input[1] * input[1] + input[2] * input[2]);
+    float length = sqrtf(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]);
+    if (length < 0.000001f || submitted < 0.000001f)
+        return 1;
+    for (int axis = 0; axis < 3; axis++)
+        vector[axis] *= submitted / length;
+    return length / submitted;
+}
+
 void G3SIM_LightVector(u32 data)
 {
+    float input[3] = { DecodeLightingComponent(data), DecodeLightingComponent(data >> 10), DecodeLightingComponent(data >> 20) };
+    // DS light directions are transformed when submitted, not when a later
+    // model emits a normal. Keep the legacy path available for A/B comparison.
+    for (int axis = 0; axis < 3; axis++) {
+        sCorrectLightVector[data >> 30][axis] = 0;
+        for (int j = 0; j < 3; j++)
+            sCorrectLightVector[data >> 30][axis] += input[j] * FX_FX32_TO_F32(currentVectorMatrix.nums[j][axis]);
+    }
+    KeepSubmittedLength(input, sCorrectLightVector[data >> 30]);
+
     u8 lightVecX = (data & 0b1111111111);
     u8 lightVecXSign = (lightVecX & 0b1000000000) >> 9;
     lightVecX = lightVecX & 0b111111111;
@@ -1319,6 +1368,47 @@ void G3SIM_MtxTranslate(fx32* trans)
 
 void G3SIM_Normal(u32 data)
 {
+    if (sCorrectLighting) {
+        float input[3] = { DecodeLightingComponent(data), DecodeLightingComponent(data >> 10), DecodeLightingComponent(data >> 20) };
+        float normal[3] = {};
+        for (int axis = 0; axis < 3; axis++)
+            for (int j = 0; j < 3; j++) normal[axis] += input[j] * FX_FX32_TO_F32(currentVectorMatrix.nums[j][axis]);
+        // The field's look was tuned with those long normals, which gave
+        // every face turned towards a light full diffuse and specular light.
+        // Scaled models keep that, but faces within 20 degrees either way of
+        // where it ends ramp smoothly instead of switching between full and
+        // none.
+        bool scaled = KeepSubmittedLength(input, normal) > 1.5f;
+        float color[3];
+        for (int c = 0; c < 3; c++) color[c] = (s_g3EmissionColor[c] >> 3) / 31.0f;
+        for (int light = 0; light < 4; light++) {
+            if (!(s_curPolygonAttr.lightFlag & (1 << light))) continue;
+            const float *direction = sCorrectLightVector[light];
+            float diffuse = -(direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2]);
+            float specular = -(direction[0] * normal[0] + direction[1] * normal[1] + (direction[2] - 1.0f) * normal[2]) * 0.5f;
+            if (scaled) {
+                diffuse = SoftEdge(diffuse);
+                specular = SoftEdge(specular);
+            }
+            diffuse = diffuse < 0 ? 0 : (diffuse > 1 ? 1 : diffuse);
+            specular = specular < 0 ? 0 : (specular > 1 ? 1 : specular);
+            specular *= specular;
+            if (sUseShininessTable) {
+                int index = (int)(specular * 128);
+                specular = sShininessTable[index > 127 ? 127 : index] / 256.0f;
+            }
+            for (int c = 0; c < 3; c++) {
+                float material = ((s_g3AmbientColor[c] >> 3) + (s_g3DiffuseColor[c] >> 3) * diffuse + (s_g3SpecularColor[c] >> 3) * specular) / 31.0f;
+                color[c] += material * ((s_G3LightColor[light][c] >> 3) / 31.0f);
+            }
+        }
+        for (int c = 0; c < 3; c++) {
+            float value = color[c] < 0 ? 0 : (color[c] > 1 ? 1 : color[c]);
+            s_g3CurColor[c] = (u8)(value * 255.0f + 0.5f);
+        }
+        return;
+    }
+
     u8 vecX = (data & 0b1111111111);
     u8 vecXSign = (vecX & 0b1000000000) >> 9;
     vecX = vecX & 0b111111111;
@@ -1501,7 +1591,8 @@ void G3SIM_SpecEmi(u32 data)
     u8 emissionGreen = (data & 0b11111000000000000000000000) >> 21;
     u8 emissionBlue = (data & 0b1111100000000000000000000000000) >> 26;
 
-    if(setVtxColor) {
+    sUseShininessTable = setVtxColor != 0;
+    if(setVtxColor && !sCorrectLighting) {
         s_g3CurColor[0] = specularRed << 3;
         s_g3CurColor[1] = specularGreen << 3;
         s_g3CurColor[2] = specularBlue << 3;
@@ -1723,6 +1814,9 @@ void G3SIM_SubmitPolygon(G3SIM_FxVtx_t *fxVerts, int numVerts)
         SIM_assert_always();
         return;
     }
+
+    // Glowing polygons count for water reflections even off screen.
+    G3SIM_CollectEmitterPolygon(fxVerts, numVerts);
 
     // Work on a copy: strips reuse the source vertices for their next polygon.
     G3SIM_FxVtx_t clipped[8];

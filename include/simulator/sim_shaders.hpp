@@ -9,6 +9,9 @@ extern const char * G3FragmentShader;
 extern const char * G2VertexShader;
 extern const char * G2FragmentShader;
 
+extern const char * BloomVertexShader;
+extern const char * BloomFragmentShader;
+
 }
 
 

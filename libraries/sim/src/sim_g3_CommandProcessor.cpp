@@ -99,6 +99,9 @@ static void ConvertMsgParams(draw_msg_t *msg) {
   draw_msg_t tmpMsg;
   memcpy(&tmpMsg, msg, sizeof(draw_msg_t));
   switch (msg->type) {
+  case DRAW_CMD_G3_SHININESS:
+    for (int i = 0; i < 32; i++) msg->data.numsU32[i] = (u32)tmpMsg.data.numsU64[i + 1];
+    break;
   // TODO Commands
   case DRAW_CMD_G3_VIEWPORT:
     break;
@@ -215,6 +218,7 @@ static void ConvertMsgParams(draw_msg_t *msg) {
 
 static u8 GetNumParamsFromCommandType(draw_command_type_t type) {
   switch (type) {
+  case DRAW_CMD_G3_SHININESS: return 32;
   case DRAW_CMD_G3_NOP:
   case DRAW_CMD_G3_END:
   case DRAW_CMD_G3_IDENTITY:
@@ -268,6 +272,7 @@ static u8 GetNumParamsFromCommandType(draw_command_type_t type) {
 
 static u8 GetParamSizeFromCommandType(draw_command_type_t type) {
   switch (type) {
+  case DRAW_CMD_G3_SHININESS: return 4;
   case DRAW_CMD_G3_NOP:
   case DRAW_CMD_G3_IDENTITY:
   case DRAW_CMD_G3_PUSHMTX:
@@ -546,6 +551,9 @@ void HandleCommandMessage(draw_msg_t *msg) {
     break;
   case DRAW_CMD_G3_SPEC_EMI:
     G3SIM_SpecEmi(msg->data.numU32);
+    break;
+  case DRAW_CMD_G3_SHININESS:
+    G3SIM_Shininess(msg->data.numsU32);
     break;
   case DRAW_CMD_G3_DIRECT0:
     msg->type = DecodeG3Op(msg->data.numU32);

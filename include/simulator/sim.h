@@ -68,6 +68,44 @@ void SIM_pxiInit(void);
 void * SIM_Render(void *arg);
 void * SIM_RenderInit(void * arg);
 void SIM_SetInternalResolutionAfterRender(int scale);
+// Applied after presentation; only the 3D target is multisampled.
+void SIM_Set3DAntialiasing(BOOL enabled);
+int SIM_Get3DAntialiasingSamples(void);
+void SIM_SetLightingCorrection(BOOL enabled);
+// Analytic field primitives; zero restores ordinary model rendering.
+void SIM_SetFieldEffect(int mode, float phase);
+// As above; bloom weights the light an emissive material adds to the bloom.
+void SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom);
+// corners packs four 0-255 shore weights per tile, clockwise from the -x/-z corner.
+void SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection);
+void SIM_SetWaterProfiling(BOOL enabled);
+float SIM_GetWaterGpuMs(void);
+u64 SIM_VisualClockNs(void);
+void SIM_SetFieldEmissionDebug(BOOL enabled);
+// Blurs emissive field materials into the world layer; zero disables.
+void SIM_SetFieldBloom(float strength);
+// Field opts in for each frame. Other scenes return to neutral shading.
+void SIM_SetFieldAtmosphere(float fogR, float fogG, float fogB, float strength, float start, float end);
+// Lets the field shader recover each pixel's world position this frame:
+// worldFromClip maps (clip x, clip y, clip w) to world units as a row-major
+// 3x3 matrix plus offset; camera is the camera's world position; time (in
+// seconds) animates weather. Perspective views only.
+void SIM_SetFieldWorld(const float worldFromClip[9], const float offset[3], const float camera[3], float time);
+// Water surfaces (field effect 27) mirror lamps, windows and signs, on screen
+// or not, as the previous field frame drew them. Call once per field frame,
+// before drawing it, after SIM_SetFieldWorld; FALSE stops it.
+void SIM_SetFieldWaterReflection(BOOL enabled);
+// Rain on world surfaces for this field frame (0: dry). Needs SIM_SetFieldWorld.
+void SIM_SetFieldWetness(float wetness);
+// Drifting mist that hugs the ground below a world height (base) and thins
+// out over depth units above it. Needs SIM_SetFieldWorld.
+void SIM_SetFieldMist(float r, float g, float b, float strength, float base, float depth);
+// Brackets drawing world geometry (terrain and buildings), which weather
+// such as rain affects, as opposed to sprites and overlays.
+void SIM_SetFieldSurface(BOOL surface);
+// Field color grade, applied to the 3D world before fog and bloom; emissive
+// materials bypass it. Identity: tints of 1, exposure, saturation, contrast 1.
+void SIM_SetFieldGrade(const float shadows[3], const float highlights[3], float exposure, float saturation, float contrast);
 int SIM_runNitroOSThread(void * thread);
 void * SIM_sndAlarm(void * arg);
 void SIM_u16ToRGB( u16 in, u8 * r, u8 *g, u8 * b );
@@ -98,6 +136,11 @@ void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled);
 // Continue selected field sprites past the native screen edges without repeating.
 void SIM_SetFieldWideSpriteRange(u32 address, u32 size, BOOL enabled);
 u64 SIM_GetRenderFrameTime();
+// Session-only, nonblocking whole-frame GPU timing on the render context.
+void SIM_SetRenderGpuProfiling(BOOL enabled);
+float SIM_GetRenderGpuMs(void); // -1 until a result is available.
+int SIM_GetRenderGpuSampleAge(void);
+const char *SIM_GetGraphicsRenderer(void);
 u64 SIM_GetFullFrameTime();
 const char * SIM_GetLibntrGitHash();
 const char * SIM_GetProjectGitHash();

@@ -15,16 +15,8 @@ extern "C" int NitroSpMain(void *arg);
 #else
 #include <simulator/glad/glad.h>
 #endif
-#include <simulator/sim.h>
-#include <simulator/sim_frame_profile.h>
-#include <simulator/sim_frame_pacer.h>
-#include <simulator/sim_audio.h>
-#include <simulator/sim_net.h>
-#include <simulator/sim_shaders.hpp>
-
-#include <stdio.h>
-#include <stdlib.h>
-
+#include <chrono>
+#include <math.h>
 #include <nitro/gx/g3.h>
 #include <nitro/gx/gx_load.h>
 #include <nitro/gx/gx_vramcnt.h>
@@ -32,17 +24,24 @@ extern "C" int NitroSpMain(void *arg);
 #include <nitro/hw/X86/mmap_shared.h>
 #include <nitro/os.h>
 #include <nitro/pxi/common/fifo.h>
-
 #include <simulator/config/sim_config.h>
 #include <simulator/drawmsg.h>
-#include <simulator/queue.h>
-#include <simulator/simvariables.h>
 #include <simulator/g3_draw.h>
 #include <simulator/g3_handler.h>
-#include <simulator/sim_gui.hpp>
 #include <simulator/imgui/imgui.hpp>
-
-#include <math.h>
+#include <simulator/queue.h>
+#include <simulator/sim.h>
+#include <simulator/sim_3d_target.hpp>
+#include <simulator/sim_bloom.hpp>
+#include <simulator/sim_audio.h>
+#include <simulator/sim_frame_pacer.h>
+#include <simulator/sim_frame_profile.h>
+#include <simulator/sim_gui.hpp>
+#include <simulator/sim_net.h>
+#include <simulator/sim_shaders.hpp>
+#include <simulator/simvariables.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "screenquads.h"
@@ -215,12 +214,28 @@ struct GPUFrameQuery { GLuint id = 0; u64 frame = 0; bool pending = false; };
 static GPUFrameQuery sGPUQueries[8];
 static int sGPUWrite, sGPURead, sGPUActive = -1;
 static u64 sGPUFrame;
+static bool sLiveGPUProfiling;
+static bool sGPUHasResult;
+static u64 sLastGPUFrame, sLastGPUNs;
+void SIM_SetRenderGpuProfiling(BOOL enabled) {
+  if (enabled && !sLiveGPUProfiling) sGPUHasResult = false;
+  sLiveGPUProfiling = enabled != FALSE;
+}
+float SIM_GetRenderGpuMs(void) {
+  return sGPUHasResult ? (float)(sLastGPUNs / 1000000.0) : -1.0f;
+}
+int SIM_GetRenderGpuSampleAge(void) {
+  return sGPUHasResult ? (int)(sGPUFrame - sLastGPUFrame) : -1;
+}
+const char *SIM_GetGraphicsRenderer(void) {
+  return (const char *)glGetString(GL_RENDERER);
+}
 static bool GPUProfileEnabled() {
   static const bool enabled = [] { const char *value = getenv("PLATINUM_GPU_TRACE"); return value && *value == '1'; }();
-  return enabled && SIM_ProfileEnabled();
+  return sLiveGPUProfiling || (enabled && SIM_ProfileEnabled());
 }
 static void EndGPUProfile() {
-  if (!GPUProfileEnabled()) return;
+  if (!GPUProfileEnabled() && sGPUActive < 0) return;
   if (sGPUActive >= 0) {
     glEndQuery(GL_TIME_ELAPSED);
     sGPUQueries[sGPUActive].pending = true;
@@ -235,6 +250,9 @@ static void EndGPUProfile() {
     if (ready) {
       GLuint64 elapsed = 0;
       glGetQueryObjectui64v(query.id, GL_QUERY_RESULT, &elapsed);
+      sLastGPUNs = elapsed;
+      sLastGPUFrame = query.frame;
+      sGPUHasResult = true;
       SIM_ProfileSet(SIM_PROFILE_GPU_NS, elapsed);
       SIM_ProfileSet(SIM_PROFILE_GPU_FRAME, query.frame);
       query.pending = false;
@@ -302,6 +320,7 @@ GLuint s_objTextureId[5];
 static GLuint g2TextureId;
 static GLuint g3RenderTextureId;
 static GLuint g3FogTextureId;
+static GLuint g3EmissionTextureId;
 static GLuint dummyScreenTextureId;
 static GLuint objWindowTextureId;
 
@@ -321,6 +340,103 @@ static GLuint g2vertexBuffer;
 
 // RBOs
 static GLuint g3RenderBufferId;
+static SIM3DTarget s3DTarget;
+static SIMBloom sBloom;
+static constexpr GLint s_BloomTexUnit = 15;
+static float sBloomRequested, sBloomApplied;
+static bool sAntialiasRequested = false;
+static bool sAntialiasApplied = false;
+
+void SIM_Set3DAntialiasing(BOOL enabled) {
+  sAntialiasRequested = enabled != FALSE;
+}
+
+int SIM_Get3DAntialiasingSamples(void) { return s3DTarget.Samples(); }
+void SIM_SetLightingCorrection(BOOL enabled) { G3SIM_SetLightingCorrection(enabled); }
+void SIM_SetFieldEffect(int mode, float phase) { G3SIM_SetFieldEffect(mode, phase); }
+void SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom) { G3SIM_SetFieldEmissiveEffect(mode, phase, bloom); }
+void SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection)
+{
+    G3SIM_DrawWaterTiles(tiles, corners, count, phase, view, projection);
+}
+void SIM_SetWaterProfiling(BOOL enabled)
+{
+    G3SIM_SetWaterProfiling(enabled);
+}
+float SIM_GetWaterGpuMs(void)
+{
+    return G3SIM_GetWaterGpuMs();
+}
+u64 SIM_VisualClockNs(void)
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void SIM_SetFieldBloom(float strength)
+{
+    sBloomRequested = strength > 0 ? strength : 0;
+}
+
+void SIM_SetFieldEmissionDebug(BOOL enabled)
+{
+    glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldEmissionOnly"), enabled ? 1 : 0);
+}
+
+static void SetFieldGradeUniforms(const float shadows[3], const float highlights[3], float exposure, float saturation, float contrast) {
+  glProgramUniform3f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "gradeShadows"), shadows[0], shadows[1], shadows[2]);
+  glProgramUniform3f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "gradeHighlights"), highlights[0], highlights[1], highlights[2]);
+  glProgramUniform3f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "gradeParams"), exposure, saturation, contrast);
+}
+
+static void ResetFieldGrade() {
+  const float one[3] = {1, 1, 1};
+  SetFieldGradeUniforms(one, one, 1, 1, 1);
+}
+
+void SIM_SetFieldGrade(const float shadows[3], const float highlights[3], float exposure, float saturation, float contrast) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  SetFieldGradeUniforms(shadows, highlights, exposure, saturation, contrast);
+}
+
+// The field camera of this frame, for collecting reflected lights.
+static float sFieldWorldFromClip[9], sFieldWorldOffset[3];
+void SIM_SetFieldWorld(const float worldFromClip[9], const float offset[3], const float camera[3], float time) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  memcpy(sFieldWorldFromClip, worldFromClip, sizeof(sFieldWorldFromClip));
+  memcpy(sFieldWorldOffset, offset, sizeof(sFieldWorldOffset));
+  glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldWorld"), 1);
+  glProgramUniform1f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldTime"), time);
+  glProgramUniformMatrix3fv(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "worldFromClip"), 1, GL_TRUE, worldFromClip);
+  glProgramUniform3fv(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "worldFromClipOffset"), 1, offset);
+  glProgramUniform3fv(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "cameraWorld"), 1, camera);
+}
+void SIM_SetFieldWaterReflection(BOOL enabled) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  G3SIM_SetFieldEmitterCollection(enabled, sFieldWorldFromClip, sFieldWorldOffset);
+}
+void SIM_SetFieldWetness(float wetness) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  glProgramUniform1f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldWetness"), wetness);
+}
+void SIM_SetFieldMist(float r, float g, float b, float strength, float base, float depth) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "groundMist"), r, g, b, strength);
+  glProgramUniform2f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "groundMistLayer"), base, depth);
+}
+void SIM_SetFieldSurface(BOOL surface) { G3SIM_SetFieldSurface(surface ? 1 : 0); }
+
+void SIM_SetFieldAtmosphere(float fogR, float fogG, float fogB, float strength, float start, float end) {
+  G3SIM_FlushArray();
+  G3SIM_DrawItems();
+  glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "atmosphereFog"), fogR, fogG, fogB, strength);
+  glProgramUniform2f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "atmosphereRange"), start, end);
+}
+
 
 // Shaders
 static GLint g2VertexShader;
@@ -471,7 +587,7 @@ static void ApplyPendingInternalResolution() {
   glActiveTexture(GL_TEXTURE0);
   glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
   glGetIntegerv(GL_RENDERBUFFER_BINDING, &renderbuffer);
-  for (GLuint id : {g3RenderTextureId, g3FogTextureId}) {
+  for (GLuint id : {g3RenderTextureId, g3FogTextureId, g3EmissionTextureId}) {
     glBindTexture(GL_TEXTURE_2D, id);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_MaxViewWidth * scale,
                  SIM_NDS_SCREEN_HEIGHT * 2 * scale, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -479,7 +595,7 @@ static void ApplyPendingInternalResolution() {
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
   glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
       s_MaxViewWidth * scale, SIM_NDS_SCREEN_HEIGHT * 2 * scale);
-  // New storage has undefined contents; initialize both color attachments and
+  // New storage has undefined contents; initialize every color attachment and
   // the depth/stencil buffer before the game starts the next 3D frame.
   GLint framebuffer, stencilMask;
   GLboolean depthMask;
@@ -490,8 +606,7 @@ static void ApplyPendingInternalResolution() {
   glDisable(GL_SCISSOR_TEST);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g3FrameBuffer);
   const GLfloat clearColor[] = {0, 0, 0, 0};
-  glClearBufferfv(GL_COLOR, 0, clearColor);
-  glClearBufferfv(GL_COLOR, 1, clearColor);
+  for (int i = 0; i < 3; i++) glClearBufferfv(GL_COLOR, i, clearColor);
   glDepthMask(GL_TRUE);
   glStencilMask(0xff);
   glClearBufferfi(GL_DEPTH_STENCIL, 0, 1.0f, 0);
@@ -502,8 +617,16 @@ static void ApplyPendingInternalResolution() {
   glBindTexture(GL_TEXTURE_2D, texture);
   glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
   glActiveTexture(activeTexture);
+  sBloom.Resize(s_MaxViewWidth, SIM_NDS_SCREEN_HEIGHT * 2, scale);
   s_SIM_config.internalResolutionScale = scale;
   SIM_Config_SaveConfigFile(&s_SIM_config);
+}
+
+static void ApplyPending3DAntialiasing(bool resolutionChanged) {
+  if (!resolutionChanged && sAntialiasRequested == sAntialiasApplied) return;
+  s3DTarget.Resize(s_MaxViewWidth * s_SIM_config.internalResolutionScale,
+      SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale, sAntialiasRequested);
+  sAntialiasApplied = sAntialiasRequested;
 }
 
 void *SIM_RenderInit(void *arg) {
@@ -727,8 +850,21 @@ void *SIM_RenderInit(void *arg) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
                          g3FogTextureId, 0);
-  const GLenum g3DrawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-  glDrawBuffers(2, g3DrawBuffers);
+  // Emitted light, filtered because the bloom prefilter averages it.
+  glGenTextures(1, &g3EmissionTextureId);
+  glBindTexture(GL_TEXTURE_2D, g3EmissionTextureId);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+               s_MaxViewWidth * s_SIM_config.internalResolutionScale,
+               SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale,
+               0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D,
+                         g3EmissionTextureId, 0);
+  const GLenum g3DrawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+  glDrawBuffers(3, g3DrawBuffers);
   glGenRenderbuffers(1, &g3RenderBufferId);
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
   glRenderbufferStorage(
@@ -799,12 +935,18 @@ void *SIM_RenderInit(void *arg) {
   CompileVertexShader(myVertexShader, SIM::G3VertexShader);
   CompileFragmentShader(myFragmentShader, SIM::G3FragmentShader);
   LinkShader(g3shaderProgramID, myVertexShader, myFragmentShader);
+  ResetFieldGrade();
+  glProgramUniform1f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldEmissionWeight"), 1);
 
   // Setup G2 Shader Program
   g2shaderProgramID = glCreateProgram();
   CompileVertexShader(g2VertexShader, SIM::G2VertexShader);
   CompileFragmentShader(g2FragmentShader, SIM::G2FragmentShader);
   LinkShader(g2shaderProgramID, g2VertexShader, g2FragmentShader);
+
+  sBloom.Init(SIM::BloomVertexShader, SIM::BloomFragmentShader);
+  sBloom.Resize(s_MaxViewWidth, SIM_NDS_SCREEN_HEIGHT * 2, s_SIM_config.internalResolutionScale);
+  glUseProgram(g2shaderProgramID);
 
   GLint texUnitLoc = glGetUniformLocation(g2shaderProgramID, "myTexture");
   glProgramUniform1i(g2shaderProgramID, texUnitLoc, 0);
@@ -1090,6 +1232,12 @@ static void DrawEngine(BOOL isSub) {
   glActiveTexture(GL_TEXTURE11);
   glBindTexture(GL_TEXTURE_2D, g3FogTextureId);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogTexture"), 11);
+  glActiveTexture(GL_TEXTURE0 + s_BloomTexUnit);
+  glBindTexture(GL_TEXTURE_2D, sBloom.Texture());
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "bloomTexture"), s_BloomTexUnit);
+  // Only the main engine composites the 3D layer.
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "bloomStrength"),
+                     isSub ? 0.0f : sBloomApplied * SIMBloom::Normalization());
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogAlpha"),
                      (float)((s_reg_G3X_FOG_COLOR >> 16) & 31) / 32.0f);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogAlphaOnly"),
@@ -1372,6 +1520,27 @@ void *SIM_Render(void *arg) {
 
   // Draw the translucent 3D stuff
   G3SIM_DrawItems();
+  s3DTarget.Resolve(g3FrameBuffer);
+  sBloomApplied = sBloom.Ready() ? sBloomRequested : 0;
+  if (sBloomApplied > 0) {
+    sBloom.Run(g3EmissionTextureId, s_MaxViewWidth * s_SIM_config.internalResolutionScale,
+        SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale);
+  }
+  // At large internal resolutions, average the supersampled world instead of
+  // selecting just four source texels. This also smooths edges when the MSAA
+  // memory budget is exceeded. Sprite/UI layer textures keep their own filters.
+  {
+    GLint activeTexture, texture;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+    glBindTexture(GL_TEXTURE_2D, g3RenderTextureId);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+        sAntialiasApplied ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    if (sAntialiasApplied) glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glActiveTexture(activeTexture);
+  }
 
   do {
 #ifdef SDK_TRACY_ENABLE
@@ -1788,7 +1957,9 @@ void *SIM_Render(void *arg) {
     if (paced && swapInterval != 0) WaitForFrameDeadline(deadline);
     const u64 profileWaitEnd = SIM_ProfileNow();
     if (paced) sFramePacer.finish(FrameClockNs());
+    const u32 previousResolution = s_SIM_config.internalResolutionScale;
     ApplyPendingInternalResolution();
+    ApplyPending3DAntialiasing(previousResolution != s_SIM_config.internalResolutionScale);
 
     //Calculate full frametime (after swap)
     clock_gettime(CLOCK_MONOTONIC, &curTime);
@@ -1813,7 +1984,7 @@ void *SIM_Render(void *arg) {
 
   } while (SIM::GUI::IsGameLogicPaused());
   // Bind 3D Framebuffer & Renderbuffer
-  glBindFramebuffer(GL_FRAMEBUFFER, g3FrameBuffer);
+  glBindFramebuffer(GL_FRAMEBUFFER, s3DTarget.DrawFramebuffer(g3FrameBuffer));
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
 
   // Restore the view that was selected by the game for this frame.
@@ -1821,12 +1992,26 @@ void *SIM_Render(void *arg) {
 
   // Activate 3D shader
   glUseProgram(g3shaderProgramID);
+  G3SIM_SetFieldEffect(0, 0);
+  SIM_SetFieldEmissionDebug(FALSE);
+  // Enhancements are opt-in per field frame, including native-width fields.
+  ResetFieldGrade();
+  glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "atmosphereFog"), 0, 0, 0, 0);
+  glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldWorld"), 0);
+  glProgramUniform1f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldWetness"), 0);
+  glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "groundMist"), 0, 0, 0, 0);
+  glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "emitterCount"), 0);
+  G3SIM_EndFieldEmitterCollection();
+  G3SIM_SetFieldSurface(0);
+  sBloomRequested = 0;
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
   // Fog state belongs to the last visible polygon, including translucent beams.
   glEnablei(GL_BLEND, 0);
   glDisablei(GL_BLEND, 1);
+  // Emission is blended like color so translucent surfaces partly occlude it.
+  glEnablei(GL_BLEND, 2);
 
   glCullFace(GL_FRONT);
   glFrontFace(GL_CW);
@@ -2004,7 +2189,7 @@ int main(int argc, char *argv[]) {
 
   SIM_RenderInit(NULL);
   G3SIM_DrawInit();
-  atexit([] { G3SIM_ClearTextureCache(); });
+  atexit([] { s3DTarget.Destroy(); G3SIM_ClearTextureCache(); });
 
 // Init Sockets (only needed on windows)
 #ifdef SDK_BUILD_WIN64

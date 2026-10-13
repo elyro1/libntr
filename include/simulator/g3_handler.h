@@ -121,6 +121,8 @@ void G3SIM_DiffAmb(u32 data);
 void G3SIM_Identity();
 void G3SIM_LightColor(u32 data);
 void G3SIM_LightVector(u32 data);
+void G3SIM_SetLightingCorrection(BOOL enabled);
+void G3SIM_Shininess(const u32 *table);
 void G3SIM_MtxLoad43(MtxFx43 * mtx);
 void G3SIM_MtxLoad44(MtxFx44 * mtx);
 void G3SIM_MtxMode(GXMtxMode mode);
@@ -147,6 +149,7 @@ int G3SIM_ClipPolygon(fx32 verts[][4], int nVerts, int clipStart, BOOL attribs);
 u8 G3SIM_SwapBuffersCalledThisFrame();
 void G3SIM_ResetSwapBuffersCall();
 void G3SIM_SubmitPolygon(G3SIM_FxVtx_t * fxVerts, int numVerts);
+void G3SIM_CollectEmitterPolygon(const G3SIM_FxVtx_t *verts, int count);
 
 #ifdef __cplusplus
 }
