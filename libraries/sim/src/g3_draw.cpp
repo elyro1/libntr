@@ -1,6 +1,4 @@
-#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
 #include <simulator/sim.h>
-#endif
 #include <simulator/g3_draw.h>
 
 #include <simulator/g3_handler.h>
@@ -321,6 +319,41 @@ static void G3SIM_ApplyPolygonRasterState(const G3SIM_PolygonAttr_t &polygon)
 	}
 }
 
+// COMP4x4 stores two-bit texels and a separate palette descriptor per block.
+// Keep both streams and the referenced colors in the immutable cache identity.
+static void G3SIM_DecodeCompressed(const u8 *source, const u8 *palette, u8 *out,
+                                  u32 width, u32 height)
+{
+    const u32 blocks = width * height / 16;
+    const u8 *indices = source + blocks * 4;
+    for (u32 block = 0; block < blocks; ++block) {
+        u16 descriptor;
+        memcpy(&descriptor, indices + block * 2, 2);
+        const u32 mode = descriptor >> 14;
+        u16 colors[4];
+        memcpy(colors, palette + block * 8, 8);
+        if (mode & 1) {
+            colors[2] = colors[3] = 0;
+            for (u32 shift = 0; shift < 15; shift += 5) {
+                const u32 a = (colors[0] >> shift) & 31;
+                const u32 b = (colors[1] >> shift) & 31;
+                colors[2] |= (mode == 1 ? (a + b) / 2 : (a * 5 + b * 3) / 8) << shift;
+                if (mode == 3) colors[3] |= ((a * 3 + b * 5) / 8) << shift;
+            }
+        }
+        const u32 x = (block % (width / 4)) * 4;
+        const u32 y = (block / (width / 4)) * 4;
+        for (u32 row = 0; row < 4; ++row) {
+            for (u32 col = 0; col < 4; ++col) {
+                const u32 index = (source[block * 4 + row] >> (col * 2)) & 3;
+                u8 *pixel = out + ((y + row) * width + x + col) * 4;
+                SIM_u16ToRGB(colors[index], pixel, pixel + 1, pixel + 2);
+                pixel[3] = (mode < 2 && index == 3) ? 0 : 255;
+            }
+        }
+    }
+}
+
 static G3Texture *G3SIM_AcquireTexture() {
 	G3Texture *texture = nullptr;
 
@@ -335,6 +368,7 @@ static G3Texture *G3SIM_AcquireTexture() {
         u8 *vramPltt = (u8 *)getTexPlttVramBank() + s_texPlttBase;
         const u32 pixels = s_texImageParam.textureSSize * s_texImageParam.textureTSize;
         u32 sourceSize = pixels, paletteSize = 0;
+        std::vector<u8> compressedSource, compressedPalette;
         switch (s_texImageParam.textureFormat) {
         case GX_TEXFMT_PLTT4: sourceSize = pixels / 4; paletteSize = 8; break;
         case GX_TEXFMT_PLTT16: sourceSize = pixels / 2; paletteSize = 32; break;
@@ -342,6 +376,27 @@ static G3Texture *G3SIM_AcquireTexture() {
         case GX_TEXFMT_A3I5: paletteSize = 64; break;
         case GX_TEXFMT_A5I3: paletteSize = 16; break;
         case GX_TEXFMT_DIRECT: sourceSize = pixels * 2; break;
+        case GX_TEXFMT_COMP4x4: {
+            const u32 blocks = pixels / 16;
+            const u32 indexOffset = GX_COMP4x4_PLTT_IDX(s_texImageParam.textureOffset);
+            const u8 *indices = (u8 *)getTextureVramBank() + indexOffset;
+            compressedSource.assign(vramTex, vramTex + blocks * 4);
+            compressedSource.insert(compressedSource.end(), indices, indices + blocks * 2);
+            compressedPalette.resize(blocks * 8, 0);
+            for (u32 block = 0; block < blocks; ++block) {
+                u16 descriptor;
+                memcpy(&descriptor, indices + block * 2, 2);
+                const u32 mode = descriptor >> 14;
+                const u32 colorBytes = (mode & 1) ? 4 : (mode == 0 ? 6 : 8);
+                memcpy(compressedPalette.data() + block * 8,
+                       vramPltt + (descriptor & 0x3fff) * 4, colorBytes);
+            }
+            vramTex = compressedSource.data();
+            vramPltt = compressedPalette.data();
+            sourceSize = compressedSource.size();
+            paletteSize = compressedPalette.size();
+            break;
+        }
         default: SIM_assert_always(); return nullptr;
         }
         SIM_assert(vramTex != nullptr);
@@ -379,6 +434,7 @@ static G3Texture *G3SIM_AcquireTexture() {
             case GX_TEXFMT_PLTT16: G3SIM_DecodeTex16(vramTex, colors, decoded.data(), texture->width, texture->height); break;
             case GX_TEXFMT_PLTT256: G3SIM_DecodeTex256(vramTex, colors, decoded.data(), texture->width, texture->height); break;
             case GX_TEXFMT_A5I3: G3SIM_DecodeTexA5I3(vramTex, colors, decoded.data(), texture->width, texture->height); break;
+            case GX_TEXFMT_COMP4x4: G3SIM_DecodeCompressed(vramTex, vramPltt, decoded.data(), texture->width, texture->height); break;
             case GX_TEXFMT_DIRECT: G3SIM_DecodeTexDirect(vramTex, decoded.data(), texture->width, texture->height); break;
             }
             glGenTextures(1, &texture->id);
@@ -409,10 +465,6 @@ u32 G3SIM_PrewarmTexture(u32 image, u32 palette) {
     const u32 previousPalette = s_texPlttBase;
     G3SIM_TexImageParam(image);
     G3SIM_TexPlttBase(palette);
-    if (s_texImageParam.textureFormat == GX_TEXFMT_COMP4x4) {
-        s_texImageParam = previous; s_texPlttBase = previousPalette;
-        return 0;
-    }
     const u64 before = sUploadedBytes;
     G3Texture *entry = G3SIM_AcquireTexture();
     u32 bytes = sUploadedBytes - before;
