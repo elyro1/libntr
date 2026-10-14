@@ -50,8 +50,19 @@ extern u8 OBJWindow[2][256];
 
 static u8 *bgTexTable[] = {bg0tex, bg1tex, bg2tex, bg3tex};
 static u8 *bgsTexTable[] = {bg0stex, bg1stex, bg2stex, bg3stex};
-static s32 bgAffineX[4];
-static s32 bgAffineY[4];
+struct ScanlineAffine {
+  s16 a, b, c, d;
+  s32 x, y;
+};
+static ScanlineAffine s_ScanlineAffine[2][SIM_NDS_SCREEN_HEIGHT][2];
+static s32 s_AffineX[2][2], s_AffineY[2][2];
+static u32 s_LastAffineX[2][2], s_LastAffineY[2][2];
+
+static s32 SignExtendAffineReference(u32 value) {
+  // The DS reference registers contain signed 20.8 values (28 bits).
+  value &= 0x0fffffff;
+  return (value & 0x08000000) ? (s32)(value | 0xf0000000) : (s32)value;
+}
 
 // RG: rectangular/outside mask and OBJ-inside mask. Include widescreen sides.
 static u8 s_WindowMasks[2][SIM_NDS_SCREEN_HEIGHT * 2 * SIM_FIELD_SPRITE_WIDTH * 2];
@@ -93,6 +104,41 @@ void G2SIM_CaptureScanline(u32 line) {
         engine ? s_reg_G2S_DB_BG1OFS : s_reg_G2_BG1OFS,
         engine ? s_reg_G2S_DB_BG2OFS : s_reg_G2_BG2OFS,
         engine ? s_reg_G2S_DB_BG3OFS : s_reg_G2_BG3OFS};
+    const s16 matrices[2][4] = {
+        {(s16)(engine ? s_reg_G2S_DB_BG2PA : s_reg_G2_BG2PA),
+         (s16)(engine ? s_reg_G2S_DB_BG2PB : s_reg_G2_BG2PB),
+         (s16)(engine ? s_reg_G2S_DB_BG2PC : s_reg_G2_BG2PC),
+         (s16)(engine ? s_reg_G2S_DB_BG2PD : s_reg_G2_BG2PD)},
+        {(s16)(engine ? s_reg_G2S_DB_BG3PA : s_reg_G2_BG3PA),
+         (s16)(engine ? s_reg_G2S_DB_BG3PB : s_reg_G2_BG3PB),
+         (s16)(engine ? s_reg_G2S_DB_BG3PC : s_reg_G2_BG3PC),
+         (s16)(engine ? s_reg_G2S_DB_BG3PD : s_reg_G2_BG3PD)}};
+    const volatile u32 *referencesX[] = {
+        engine ? &s_reg_G2S_DB_BG2X : &s_reg_G2_BG2X,
+        engine ? &s_reg_G2S_DB_BG3X : &s_reg_G2_BG3X};
+    const volatile u32 *referencesY[] = {
+        engine ? &s_reg_G2S_DB_BG2Y : &s_reg_G2_BG2Y,
+        engine ? &s_reg_G2S_DB_BG3Y : &s_reg_G2_BG3Y};
+    for (int bg = 0; bg < 2; bg++) {
+      ScanlineAffine &affine = s_ScanlineAffine[engine][line][bg];
+      affine.a = matrices[bg][0];
+      affine.b = matrices[bg][1];
+      affine.c = matrices[bg][2];
+      affine.d = matrices[bg][3];
+      const u32 x = *referencesX[bg], y = *referencesY[bg];
+      // Reference writes reload the internal origin, even when a DMA entry
+      // repeats the same value. Otherwise PB/PD advance it each scanline.
+      if (line == 0 || x != s_LastAffineX[engine][bg] || MIi_HBlankDmaWritesTo(referencesX[bg]))
+        s_AffineX[engine][bg] = SignExtendAffineReference(x);
+      if (line == 0 || y != s_LastAffineY[engine][bg] || MIi_HBlankDmaWritesTo(referencesY[bg]))
+        s_AffineY[engine][bg] = SignExtendAffineReference(y);
+      s_LastAffineX[engine][bg] = x;
+      s_LastAffineY[engine][bg] = y;
+      affine.x = s_AffineX[engine][bg];
+      affine.y = s_AffineY[engine][bg];
+      s_AffineX[engine][bg] += affine.b;
+      s_AffineY[engine][bg] += affine.d;
+    }
     blend[3] = 0;
     for (int bg = 0; bg < 4; bg++) {
       blend[3] |= (controls[bg] & 3) << (bg * 2);
@@ -795,24 +841,10 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       break;
     case 2:
       bgcnt = s_reg_G2S_DB_BG2CNT;
-      rotA = s_reg_G2S_DB_BG2PA;
-      rotB = s_reg_G2S_DB_BG2PB;
-      rotC = s_reg_G2S_DB_BG2PC;
-      rotD = s_reg_G2S_DB_BG2PD;
-
-      rotX = s_reg_G2S_DB_BG2X;
-      rotY = s_reg_G2S_DB_BG2Y;
       pixelBuf = bg2stex;
       break;
     case 3:
       bgcnt = s_reg_G2S_DB_BG3CNT;
-      rotA = s_reg_G2S_DB_BG3PA;
-      rotB = s_reg_G2S_DB_BG3PB;
-      rotC = s_reg_G2S_DB_BG3PC;
-      rotD = s_reg_G2S_DB_BG3PD;
-
-      rotX = s_reg_G2S_DB_BG3X;
-      rotY = s_reg_G2S_DB_BG3Y;
       pixelBuf = bg3stex;
       break;
     default:
@@ -830,24 +862,10 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       break;
     case 2:
       bgcnt = s_reg_G2_BG2CNT;
-      rotA = s_reg_G2_BG2PA;
-      rotB = s_reg_G2_BG2PB;
-      rotC = s_reg_G2_BG2PC;
-      rotD = s_reg_G2_BG2PD;
-
-      rotX = s_reg_G2_BG2X;
-      rotY = s_reg_G2_BG2Y;
       pixelBuf = bg2tex;
       break;
     case 3:
       bgcnt = s_reg_G2_BG3CNT;
-      rotA = s_reg_G2_BG3PA;
-      rotB = s_reg_G2_BG3PB;
-      rotC = s_reg_G2_BG3PC;
-      rotD = s_reg_G2_BG3PD;
-
-      rotX = s_reg_G2_BG3X;
-      rotY = s_reg_G2_BG3Y;
       pixelBuf = bg3tex;
       break;
     default:
@@ -856,23 +874,13 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       break;
     }
   }
-  if (line == 0) {
-    if (isSub) {
-      bgAffineX[bgnum - 2] = rotX;
-      bgAffineY[bgnum - 2] = rotY;
-    } else {
-      bgAffineX[bgnum] = rotX;
-      bgAffineY[bgnum] = rotY;
-    }
-  } else {
-    if (isSub) {
-      rotX = bgAffineX[bgnum - 2];
-      rotY = bgAffineY[bgnum - 2];
-    } else {
-      rotX = bgAffineX[bgnum];
-      rotY = bgAffineY[bgnum];
-    }
-  }
+  const ScanlineAffine &affine = s_ScanlineAffine[isSub][line][bgnum - 2];
+  rotA = affine.a;
+  rotB = affine.b;
+  rotC = affine.c;
+  rotD = affine.d;
+  rotX = affine.x;
+  rotY = affine.y;
 
   switch (bgcnt & 0xC000) {
   case 0x0000:
@@ -963,14 +971,6 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
     rotY += rotC;
   }
 
-  if (isSub) {
-    bgAffineX[bgnum - 2] += rotB;
-    bgAffineY[bgnum - 2] += rotD;
-  } else {
-    bgAffineX[bgnum] += rotB;
-    bgAffineY[bgnum] += rotD;
-  }
-
 #ifdef SDK_TRACY_ENABLE
   TracyCZoneEnd(ctx);
 #endif
@@ -1019,24 +1019,10 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       break;
     case 2:
       bgcnt = s_reg_G2S_DB_BG2CNT;
-      rotA = s_reg_G2S_DB_BG2PA;
-      rotB = s_reg_G2S_DB_BG2PB;
-      rotC = s_reg_G2S_DB_BG2PC;
-      rotD = s_reg_G2S_DB_BG2PD;
-
-      rotX = s_reg_G2S_DB_BG2X;
-      rotY = s_reg_G2S_DB_BG2Y;
       pixelBuf = bg2stex;
       break;
     case 3:
       bgcnt = s_reg_G2S_DB_BG3CNT;
-      rotA = s_reg_G2S_DB_BG3PA;
-      rotB = s_reg_G2S_DB_BG3PB;
-      rotC = s_reg_G2S_DB_BG3PC;
-      rotD = s_reg_G2S_DB_BG3PD;
-
-      rotX = s_reg_G2S_DB_BG3X;
-      rotY = s_reg_G2S_DB_BG3Y;
       pixelBuf = bg3stex;
       break;
     default:
@@ -1054,24 +1040,10 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       break;
     case 2:
       bgcnt = s_reg_G2_BG2CNT;
-      rotA = s_reg_G2_BG2PA;
-      rotB = s_reg_G2_BG2PB;
-      rotC = s_reg_G2_BG2PC;
-      rotD = s_reg_G2_BG2PD;
-
-      rotX = s_reg_G2_BG2X;
-      rotY = s_reg_G2_BG2Y;
       pixelBuf = bg2tex;
       break;
     case 3:
       bgcnt = s_reg_G2_BG3CNT;
-      rotA = s_reg_G2_BG3PA;
-      rotB = s_reg_G2_BG3PB;
-      rotC = s_reg_G2_BG3PC;
-      rotD = s_reg_G2_BG3PD;
-
-      rotX = s_reg_G2_BG3X;
-      rotY = s_reg_G2_BG3Y;
       pixelBuf = bg3tex;
       break;
     default:
@@ -1081,23 +1053,13 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
     }
   }
 
-  if (line == 0) {
-    if (isSub) {
-      bgAffineX[bgnum - 2] = rotX;
-      bgAffineY[bgnum - 2] = rotY;
-    } else {
-      bgAffineX[bgnum] = rotX;
-      bgAffineY[bgnum] = rotY;
-    }
-  } else {
-    if (isSub) {
-      rotX = bgAffineX[bgnum - 2];
-      rotY = bgAffineY[bgnum - 2];
-    } else {
-      rotX = bgAffineX[bgnum];
-      rotY = bgAffineY[bgnum];
-    }
-  }
+  const ScanlineAffine &affine = s_ScanlineAffine[isSub][line][bgnum - 2];
+  rotA = affine.a;
+  rotB = affine.b;
+  rotC = affine.c;
+  rotD = affine.d;
+  rotX = affine.x;
+  rotY = affine.y;
 
   if (bgcnt & 0x0040) {
   }
@@ -1330,13 +1292,6 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
     }
   }
 
-  if (isSub) {
-    bgAffineX[bgnum - 2] += rotB;
-    bgAffineY[bgnum - 2] += rotD;
-  } else {
-    bgAffineX[bgnum] += rotB;
-    bgAffineY[bgnum] += rotD;
-  }
 #ifdef SDK_TRACY_ENABLE
   TracyCZoneEnd(ctx);
 #endif

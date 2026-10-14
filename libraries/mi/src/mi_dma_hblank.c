@@ -81,23 +81,71 @@ void MI_HBlankDmaCopy16If (u32 dmaNo, const void * src, void * dest, u32 size)
 #elif defined(SDK_PORT)
 #include <nitro.h>
 #include "../include/mi_dma.h"
+// Each visible HBlank transfers one entry and reloads the destination.
+// Keep host pointers intact: the emulated DMA address registers are only 32-bit.
+static struct {
+    const u8 *source;
+    void *destination;
+    u32 size;
+} s_HBlankDma[MI_DMA_MAX_NUM + 1];
+
+static void MIi_StartHBlankDma(u32 dmaNo, const void *src, void *dest, u32 size)
+{
+    MIi_ASSERT_DMANO(dmaNo);
+    if (size == 0) {
+        return;
+    }
+    s_HBlankDma[dmaNo].source = src;
+    s_HBlankDma[dmaNo].destination = dest;
+    s_HBlankDma[dmaNo].size = size;
+}
+
+void MIi_StopHBlankDma(u32 dmaNo)
+{
+    MIi_ASSERT_DMANO(dmaNo);
+    s_HBlankDma[dmaNo].size = 0;
+}
+
+void MIi_ExecuteHBlankDma(void)
+{
+    for (u32 dmaNo = 0; dmaNo <= MI_DMA_MAX_NUM; dmaNo++) {
+        if (s_HBlankDma[dmaNo].size) {
+            memcpy(s_HBlankDma[dmaNo].destination, s_HBlankDma[dmaNo].source,
+                   s_HBlankDma[dmaNo].size);
+            s_HBlankDma[dmaNo].source += s_HBlankDma[dmaNo].size;
+        }
+    }
+}
+
+BOOL MIi_HBlankDmaWritesTo(const volatile void *address)
+{
+    for (u32 dmaNo = 0; dmaNo <= MI_DMA_MAX_NUM; dmaNo++) {
+        const u64 start = (u64)s_HBlankDma[dmaNo].destination;
+        if (s_HBlankDma[dmaNo].size && (u64)address >= start &&
+            (u64)address < start + s_HBlankDma[dmaNo].size) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 void MI_HBlankDmaCopy32(u32 dmaNo, const void *src, void *dest, u32 size)
 {
-    memcpy(dest, src, size);
+    MIi_StartHBlankDma(dmaNo, src, dest, size);
 }
 
 void MI_HBlankDmaCopy16(u32 dmaNo, const void *src, void *dest, u32 size)
 {
-    memcpy(dest, src, size);
+    MIi_StartHBlankDma(dmaNo, src, dest, size);
 }
 
 void MI_HBlankDmaCopy32If(u32 dmaNo, const void *src, void *dest, u32 size)
 {
-    memcpy(dest, src, size);
+    MIi_StartHBlankDma(dmaNo, src, dest, size);
 }
 
 void MI_HBlankDmaCopy16If(u32 dmaNo, const void *src, void *dest, u32 size)
 {
-    memcpy(dest, src, size);
+    MIi_StartHBlankDma(dmaNo, src, dest, size);
 }
 #endif

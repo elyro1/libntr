@@ -826,6 +826,9 @@ void MI_WaitDma (u32 dmaNo)
 
 void MI_StopDma (u32 dmaNo)
 {
+#ifdef SDK_PORT
+    MIi_StopHBlankDma(dmaNo);
+#endif
     OSIntrMode enabled = OS_DisableInterrupts();
     vu16 * dmaCntp = &((vu16 *)REG_DMA0SAD_ADDR)[dmaNo * 6 + 5];
 

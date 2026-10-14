@@ -1706,6 +1706,7 @@ void *SIM_Render(void *arg) {
       s_reg_GX_DISPSTAT &= ~(REG_GX_DISPSTAT_HBLK_MASK | REG_GX_DISPSTAT_VBLK_MASK);
       G2SIM_CaptureScanline(line);
       s_reg_GX_DISPSTAT |= REG_GX_DISPSTAT_HBLK_MASK;
+      MIi_ExecuteHBlankDma();
       if ((s_reg_GX_DISPSTAT & REG_GX_DISPSTAT_HBI_MASK) && (OS_GetIrqMask() & OS_IE_H_BLANK))
         OS_IRQTable[OS_IE_H_BLANK - 1]();
     }

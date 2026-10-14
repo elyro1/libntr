@@ -265,6 +265,11 @@ static inline void MI_DmaClear16Async (u32 dmaNo, void * dest, u32 size, MIDmaCa
 }
 
 void MI_DmaSend16Async(u32 dmaNo, const void * src, volatile void * dest, u32 size, MIDmaCallback callback, void * arg);
+#ifdef SDK_PORT
+void MIi_ExecuteHBlankDma(void);
+void MIi_StopHBlankDma(u32 dmaNo);
+BOOL MIi_HBlankDmaWritesTo(const volatile void *address);
+#endif
 void MI_HBlankDmaCopy32(u32 dmaNo, const void * src, void * dest, u32 size);
 void MI_HBlankDmaCopy16(u32 dmaNo, const void * src, void * dest, u32 size);
 void MI_HBlankDmaCopy32If(u32 dmaNo, const void * src, void * dest, u32 size);
