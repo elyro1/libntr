@@ -1,6 +1,6 @@
 // Debug autopilot: plays a script of key presses and takes screenshots, for testing without a person at the keyboard.
 // Off unless PLATINUM_AUTOPILOT names a script. Each line is a frame number and a command:
-//   <frame> key <SDL key name> <frames held>   e.g. "300 key Z 4"
+//   <frame> key <SDL key name> <frames held>   e.g. "300 key Z 4", "1700 key Left_Shift 99999"
 //   <frame> shot <file.ppm>                     the window as it is drawn that frame
 //   <frame> quit
 // Lines starting with # are comments. Frames count the rendered frames from start.
@@ -96,7 +96,14 @@ extern "C" void SIM_Autopilot_Frame(void) {
     while (sNext < sCommands.size() && sCommands[sNext].frame <= sFrame) {
         const Command &cmd = sCommands[sNext++];
         if (cmd.kind == "key") {
-            SDL_Keycode key = SDL_GetKeyFromName(cmd.arg.c_str());
+            // Key names with spaces are written with underscores: Left_Shift
+            std::string name = cmd.arg;
+            for (char &c : name) {
+                if (c == '_') {
+                    c = ' ';
+                }
+            }
+            SDL_Keycode key = SDL_GetKeyFromName(name.c_str());
             if (key == SDLK_UNKNOWN) {
                 std::fprintf(stderr, "[autopilot] unknown key %s\n", cmd.arg.c_str());
                 continue;
@@ -110,6 +117,11 @@ extern "C" void SIM_Autopilot_Frame(void) {
             std::exit(0);
         }
     }
+}
+
+// Saves the next presented frame, for the game's own debug tools
+extern "C" void SIM_Autopilot_RequestShot(const char *path) {
+    sPendingShot = path;
 }
 
 // Called just before the frame is presented, with the window's drawable size
