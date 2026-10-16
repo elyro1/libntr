@@ -1340,6 +1340,9 @@ u32 SIM_SetFieldWidescreen(BOOL enabled) {
   return width;
 }
 
+extern "C" void SIM_Autopilot_Frame(void);
+extern "C" void SIM_Autopilot_BeforeSwap(int width, int height);
+
 void *SIM_Render(void *arg) {
 
   SDL_Event Event;
@@ -1481,6 +1484,7 @@ void *SIM_Render(void *arg) {
       s_SIM_SDLJoystick = SDL_JoystickOpen(0);
     }
 
+    SIM_Autopilot_Frame();
     while (SDL_PollEvent(&Event)) {
       SIM::GUI::ProcessEvent(&Event);
 
@@ -1765,6 +1769,7 @@ void *SIM_Render(void *arg) {
     // high-refresh displays and on drivers that ignore the swap interval.
     if (paced && swapInterval == 0) WaitForFrameDeadline(deadline);
     const u64 profileSwapStart = SIM_ProfileNow();
+    SIM_Autopilot_BeforeSwap(windowWidth, windowHeight);
     SDL_GL_SwapWindow(window);
     const u64 profileSwapEnd = SIM_ProfileNow();
     if (paced && swapInterval != 0) WaitForFrameDeadline(deadline);

@@ -133,13 +133,22 @@ void MTX_TransApply44 (const MtxFx44 *pSrc, MtxFx44 *pDst, fx32 x, fx32 y, fx32 
 
 #ifdef SDK_PORT
 void MTX_Transpose44_(const MtxFx44* pSrc, MtxFx44* pDst) {
-    //PCPORT_TODO
-    SIM_assert_always_msg("Not implemented");
+    MtxFx44 tmp;
+
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            tmp.m[i][j] = pSrc->m[j][i];
+        }
+    }
+    *pDst = tmp;
 }
 
 void MTX_Scale44_(MtxFx44 * pDst, fx32 x, fx32 y, fx32 z) {
-    //PCPORT_TODO
-    SIM_assert_always_msg("Not implemented");
+    MI_CpuClear32(pDst, sizeof(*pDst));
+    pDst->_00 = x;
+    pDst->_11 = y;
+    pDst->_22 = z;
+    pDst->_33 = FX32_ONE;
 }
 #else
 asm void MTX_Transpose44_ (register const MtxFx44 *pSrc, register MtxFx44 *pDst)

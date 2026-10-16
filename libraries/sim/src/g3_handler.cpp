@@ -305,6 +305,19 @@ static void calculateClipMatrix()
 
     memcpy( (void*)&s_reg_G3X_CLIPMTX_RESULT_0, &fxMtx, sizeof( MtxFx44 ) );
 
+    // The vector matrix's 3x3 part, which G3X_GetVectorMtx reads back: NitroSystem's envelope (NODEMIX) models
+    // read it to blend their joints' normal matrices
+    MtxFx33 vecMtx;
+    vecMtx._00 = currentVectorMatrix.nums[0][0];
+    vecMtx._01 = currentVectorMatrix.nums[0][1];
+    vecMtx._02 = currentVectorMatrix.nums[0][2];
+    vecMtx._10 = currentVectorMatrix.nums[1][0];
+    vecMtx._11 = currentVectorMatrix.nums[1][1];
+    vecMtx._12 = currentVectorMatrix.nums[1][2];
+    vecMtx._20 = currentVectorMatrix.nums[2][0];
+    vecMtx._21 = currentVectorMatrix.nums[2][1];
+    vecMtx._22 = currentVectorMatrix.nums[2][2];
+    memcpy( (void*)&s_reg_G3X_VECMTX_RESULT_0, &vecMtx, sizeof( MtxFx33 ) );
 
     return;
 }

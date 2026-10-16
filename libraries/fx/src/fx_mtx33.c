@@ -31,26 +31,44 @@ void MTX_Identity33_(MtxFx33* pDst)
 
 void MTX_Copy33To43_(const MtxFx33* pSrc, MtxFx43* pDst)
 {
-    SIM_assert_always_msg("Not implemented");
-    return;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            pDst->m[i][j] = pSrc->m[i][j];
+        }
+    }
+    pDst->_30 = pDst->_31 = pDst->_32 = 0;
 }
 
 void MTX_Copy33To44_(const MtxFx33* pSrc, MtxFx44* pDst)
 {
-    SIM_assert_always_msg("Not implemented");
-    return;
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            pDst->m[i][j] = pSrc->m[i][j];
+        }
+        pDst->m[i][3] = 0;
+    }
+    pDst->_30 = pDst->_31 = pDst->_32 = 0;
+    pDst->_33 = FX32_ONE;
 }
 
 void MTX_Transpose33_(const MtxFx33* pSrc, MtxFx33* pDst)
 {
-    SIM_assert_always_msg("Not implemented");
-    return;
+    MtxFx33 tmp;
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            tmp.m[i][j] = pSrc->m[j][i];
+        }
+    }
+    *pDst = tmp;
 }
 
 void MTX_Scale33_(MtxFx33* pDst, fx32 x, fx32 y, fx32 z)
 {
-    SIM_assert_always_msg("Not implemented");
-    return;
+    MI_CpuClear32(pDst, sizeof(*pDst));
+    pDst->_00 = x;
+    pDst->_11 = y;
+    pDst->_22 = z;
 }
 #else
 

@@ -28,14 +28,26 @@ void MTX_Identity43_(MtxFx43* pDst)
 
 void MTX_Copy43To44_(const MtxFx43* pSrc, MtxFx44* pDst)
 {
-    //PCPORT_TODO
-    SIM_assert_always_msg("Not implemented");
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 3; j++) {
+            pDst->m[i][j] = pSrc->m[i][j];
+        }
+        pDst->m[i][3] = (i == 3) ? FX32_ONE : 0;
+    }
 }
 
+// As the SDK's: the 3x3 part is transposed and the translation becomes 0
 void MTX_Transpose43_(const MtxFx43* pSrc, MtxFx43* pDst)
 {
-    //PCPORT_TODO
-    SIM_assert_always_msg("Not implemented");
+    MtxFx43 tmp;
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            tmp.m[i][j] = pSrc->m[j][i];
+        }
+    }
+    tmp._30 = tmp._31 = tmp._32 = 0;
+    *pDst = tmp;
 }
 #else
 asm void MTX_Identity43_ (register MtxFx43 *pDst)

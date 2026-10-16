@@ -24,6 +24,7 @@ libsim_srcs = files(
     'sim_gui_config.cpp',
     'sim_gui_net.cpp',
     'sim_gui_pad.cpp',
+    'sim_autopilot.cpp',
     'sim_main.cpp',
     'sim_frame_profile.cpp',
     'sim_net.cpp',

@@ -18,6 +18,9 @@ extern "C" {
 #include <simulator/drawmsg.h>
 #include <simulator/queue.h>
 extern SIM_queue_t * drawQueuePtr;
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+u32 SIM_EncodeTextureAddress(u32 parameter, u32 baseAddress);
+#endif
 #endif
 
 static void G3_Direct0(int op);
@@ -437,6 +440,13 @@ static inline void G3_TexImageParam (GXTexFmt texFmt,
     msg = (draw_msg_t*)malloc( sizeof( draw_msg_t ) );
 
     msg->type = DRAW_CMD_G3_TEXIMAGEPARAM;
+#if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
+    // Textures past the DS's 512 KB live in the simulator's extended store, which the 16-bit address field can't
+    // reach; they are named by a virtual texture ID instead, as NitroSystem's models do
+    if (addr >= 0x80000) {
+        msg->data.numU32 = SIM_EncodeTextureAddress(GX_PACK_TEXIMAGE_PARAM(texFmt, texGen, s, t, repeat, flip, pltt0, 0), addr);
+    } else
+#endif
     msg->data.numU32 = GX_PACK_TEXIMAGE_PARAM(texFmt, texGen, s, t, repeat, flip, pltt0, addr);
 
     SIM_HandleG3Command( msg );
