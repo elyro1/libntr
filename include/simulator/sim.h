@@ -83,6 +83,10 @@ u32 SIM_DecodeTextureAddress(u32 *parameter);
 #endif
 // Repeat seamless weather BG2 textures across the wide field viewport.
 void SIM_SetFieldOverlayTiled(BOOL enabled);
+// Carry a main-engine BG layer's edge dots on into the wide field viewport's
+// sides on screen rows [firstRow, endRow), as for a band across the screen
+// (the BW2 battle's message window). layer -1 turns it off.
+void SIM_SetFieldEdgeRows(int layer, int firstRow, int endRow);
 // Extend the opaque cave mask across the wide field viewport.
 void SIM_SetFieldDarknessMask(BOOL enabled);
 // Extend the HM cut-in band without stretching its sprites.

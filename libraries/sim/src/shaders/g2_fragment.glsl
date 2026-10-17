@@ -30,6 +30,10 @@ uniform float presentationWidth;
 uniform float borderWidth;
 uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
+// SIM_SetFieldEdgeRows: a main-engine BG layer whose edge dots carry on into the wide view's sides on rows
+// [edgeRows.x, edgeRows.y), or -1
+uniform int edgeLayer;
+uniform vec2 edgeRows;
 uniform bool fieldDarknessMask;
 uniform bool fieldMoveCutIn;
 uniform bool screenFadeWindows;
@@ -81,6 +85,12 @@ vec4 sampleBg(int layer) {
         }
         vec2 overlayCoord = vec2(clamp(uiCoord.x, 0.5 / 256.0, 255.5 / 256.0), uiCoord.y);
         return texture(bgTexture[layer], overlayCoord);
+    }
+    if (layer == edgeLayer && fieldWidth > 256.0 && (uiCoord.x < 0.0 || uiCoord.x >= 1.0)) {
+        float y = ((topScreen == 1 ? 1.0 : 0.5) - uiCoord.y) * 384.0;
+        if (y >= edgeRows.x && y < edgeRows.y) {
+            return texture(bgTexture[layer], vec2(clamp(uiCoord.x, 0.5 / 256.0, 255.5 / 256.0), uiCoord.y));
+        }
     }
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
     return texture(bgTexture[layer], uiCoord);

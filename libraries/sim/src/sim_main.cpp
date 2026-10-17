@@ -78,6 +78,8 @@ static u32 s_WindowViewWidth = 256;
 static float s_BorderPresentationWidth = 256.0f;
 static u32 s_FieldViewWidth = 256;
 static BOOL s_FieldOverlayTiled = FALSE;
+static int s_FieldEdgeLayer = -1;
+static int s_FieldEdgeRows[2];
 static BOOL s_FieldDarknessMask = FALSE;
 static BOOL s_FieldMoveCutIn = FALSE;
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
@@ -1153,6 +1155,10 @@ static void DrawEngine(BOOL isSub) {
                      (float)s_FieldViewWidth);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldOverlayTiled"),
                      s_FieldOverlayTiled);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "edgeLayer"),
+                     isSub ? -1 : s_FieldEdgeLayer);
+  glProgramUniform2f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "edgeRows"),
+                     (float)s_FieldEdgeRows[0], (float)s_FieldEdgeRows[1]);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldDarknessMask"),
                      !isSub && s_FieldDarknessMask);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldMoveCutIn"),
@@ -1309,6 +1315,12 @@ static void Set3DViewport() {
 
 void SIM_SetFieldOverlayTiled(BOOL enabled) {
   s_FieldOverlayTiled = enabled;
+}
+
+void SIM_SetFieldEdgeRows(int layer, int firstRow, int endRow) {
+  s_FieldEdgeLayer = layer;
+  s_FieldEdgeRows[0] = firstRow;
+  s_FieldEdgeRows[1] = endRow;
 }
 
 void SIM_SetScreenFadeWindows(BOOL main, BOOL sub) {
