@@ -382,6 +382,21 @@ BOOL G2SIM_HasFieldSprites(void) {
   return FALSE;
 }
 
+// The OBJ extension (SIM_SetObjExtension): from this OAM entry on, the main engine's sprites read their characters
+// this far into OBJ VRAM and their palettes from the second set, which OBJ_PIXEL_EXT_PLTT marks on their pixels for
+// SIM's composition
+static int s_ObjExtFirstOam = 128;
+static u32 s_ObjExtCharOffset = 0;
+
+extern "C" void SIM_SetObjExtension(int firstOam, u32 charOffset) {
+  s_ObjExtFirstOam = firstOam;
+  s_ObjExtCharOffset = charOffset;
+}
+
+static inline bool G2SIM_IsObjExt(u32 num, u8 isSub) {
+  return !isSub && !s_FieldSpriteDraw && (int)num >= s_ObjExtFirstOam;
+}
+
 void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
   u32 dispcnt;
   u16 *oam;
@@ -1323,10 +1338,19 @@ static void DrawOBJ_RotScale(u32 num, u32 boundwidth, u32 boundheight,
   BOOL window;
   window = isWin;
 
+  const bool objExt = G2SIM_IsObjExt(num, isSub);
+  if (objExt) {
+    objvram += s_ObjExtCharOffset;
+    objvrammask = 0xFFFF;
+  }
+
   attrib = &oam[num * 4];
   u16 *rotparams = &oam[(((attrib[1] >> 9) & 0x1F) * 16) + 3];
 
   u32 pixelattr = ((attrib[2] & 0x0C00) << 6) | 0xC0000;
+  if (objExt) {
+    pixelattr |= OBJ_PIXEL_EXT_PLTT;
+  }
   u32 tilenum = attrib[2] & 0x03FF;
   u32 spritemode = window ? 0 : ((attrib[0] >> 10) & 0x3);
 
@@ -1533,9 +1557,18 @@ static void DrawOBJ_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos,
     objvrammask = 0x3FFFF;
   }
 
+  const bool objExt = G2SIM_IsObjExt(num, isSub);
+  if (objExt) {
+    objvram += s_ObjExtCharOffset;
+    objvrammask = 0xFFFF;
+  }
+
   attrib = &oam[num * 4];
 
   u32 pixelattr = ((attrib[2] & 0x0C00) << 6) | 0xC0000;
+  if (objExt) {
+    pixelattr |= OBJ_PIXEL_EXT_PLTT;
+  }
   u32 tilenum = attrib[2] & 0x03FF;
 
   BOOL window = isWin;

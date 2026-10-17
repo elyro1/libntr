@@ -391,7 +391,7 @@ extern u8 s_HW_MAIN_MEM_SUB[0x400000];
 extern u8 s_HW_MAIN_MEM[0x800000];
 extern u8 s_HW_MAIN_MEM_EX[0x800000];
 extern u8 s_HW_BG_PLTT[0x200];
-extern u8 s_HW_OBJ_PLTT[0x200];
+extern u8 s_HW_OBJ_PLTT[0x400];
 extern u8 s_HW_DB_BG_PLTT[0x200];
 extern u8 s_HW_DB_OBJ_PLTT[0x200];
 extern u8 s_HW_BG_VRAM[0x80000];

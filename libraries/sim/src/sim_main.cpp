@@ -983,7 +983,8 @@ static void DrawEngine(BOOL isSub) {
           u8 colorIdx = OBJLine[isSub][j] & 0xFF;
           if (colorIdx) {
             u16 *objPltt =
-                isSub ? (u16 *)s_HW_DB_OBJ_PLTT : (u16 *)s_HW_OBJ_PLTT;
+                isSub ? (u16 *)s_HW_DB_OBJ_PLTT
+                      : (u16 *)((OBJLine[isSub][j] & OBJ_PIXEL_EXT_PLTT) ? HW_OBJ_PLTT_EXT : HW_OBJ_PLTT);
             u16 color = objPltt[colorIdx];
             SIM_u16ToRGB(color, &r, &g, &b);
             G2SIM_PlotPixel(pixelBuf, r, g, b, j, i, isSub);

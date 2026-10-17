@@ -56,9 +56,11 @@ extern u8 s_HW_BG_PLTT[0x200];
 //#define HW_OBJ_PLTT             0x05000200
 //#define HW_OBJ_PLTT_END         0x05000400
 //#define HW_OBJ_PLTT_SIZE        (HW_OBJ_PLTT_END-HW_OBJ_PLTT)
-extern u8 s_HW_OBJ_PLTT[0x200];
+extern u8 s_HW_OBJ_PLTT[0x400];
 #define HW_OBJ_PLTT             ((u64)s_HW_OBJ_PLTT)
 #define HW_OBJ_PLTT_END         ((u64)s_HW_OBJ_PLTT + 0x200)
+// The OBJ extension's palettes (SIM_SetObjExtension), after the main ones
+#define HW_OBJ_PLTT_EXT         ((u64)s_HW_OBJ_PLTT + 0x200)
 #define HW_OBJ_PLTT_SIZE        (HW_OBJ_PLTT_END-HW_OBJ_PLTT)
 
 #define HW_PLTT                 HW_BG_PLTT

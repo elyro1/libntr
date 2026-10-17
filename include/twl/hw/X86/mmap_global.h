@@ -103,7 +103,7 @@ extern u8 s_HW_BG_PLTT[0x200];
 #define HW_BG_PLTT              ((u64)s_HW_BG_PLTT)
 #define HW_BG_PLTT_END          ((u64)s_HW_BG_PLTT + 0x200)
 #define HW_BG_PLTT_SIZE (HW_BG_PLTT_END - HW_BG_PLTT)
-extern u8 s_HW_OBJ_PLTT[0x200];
+extern u8 s_HW_OBJ_PLTT[0x400];
 #define HW_OBJ_PLTT             ((u64)s_HW_OBJ_PLTT)
 #define HW_OBJ_PLTT_END         ((u64)s_HW_OBJ_PLTT + 0x200)
 #define HW_OBJ_PLTT_SIZE        (HW_OBJ_PLTT_END-HW_OBJ_PLTT)

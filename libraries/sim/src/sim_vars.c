@@ -387,7 +387,8 @@ u8 s_HW_MAIN_MEM_SUB[0x400000];
 u8 s_HW_MAIN_MEM[0x800000];
 u8 s_HW_MAIN_MEM_EX[0x800000];
 u8 s_HW_BG_PLTT[0x200];
-u8 s_HW_OBJ_PLTT[0x200];
+// The main OBJ palettes, then a second set for the OAM entries of the OBJ extension (SIM_SetObjExtension)
+u8 s_HW_OBJ_PLTT[0x400];
 u8 s_HW_DB_BG_PLTT[0x200];
 u8 s_HW_DB_OBJ_PLTT[0x200];
 u8 s_HW_BG_VRAM[0x80000];

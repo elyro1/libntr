@@ -110,6 +110,12 @@ static void G2S_ChangeBlendAlpha(int ev1, int ev2);
 static void G2S_ChangeBlendBrightness(int brightness);
 
 #ifdef SDK_PORT
+// The OBJ extension of the main engine, for a second set of sprites beside the game's (the BW2 battle view): the OAM
+// entries from firstOam on take their characters charOffset bytes into OBJ VRAM and their colors from the second
+// set of palettes (HW_OBJ_PLTT_EXT). A charOffset that is a multiple of the mapping's reach (64K in 1D 64K mode)
+// lets their character names wrap back to the same numbers. firstOam 128 turns it off, as it starts
+void SIM_SetObjExtension(int firstOam, u32 charOffset);
+
 void G2x_SetBGyAffine_(u64 addr, const MtxFx22 *mtx, int centerX, int centerY, int x1, int y1);
 void G2x_SetBlendAlpha_(u64 addr, int plane1, int plane2, int ev1, int ev2);
 void G2x_SetBlendBrightness_(u64 addr, int plane, int brightness);

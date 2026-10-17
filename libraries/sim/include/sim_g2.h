@@ -1,6 +1,8 @@
 #ifndef SIM_G2_H
 #define SIM_G2_H
 #include <nitro/types.h>
+// On an OBJ pixel of G2SIM_DrawOBJ: its color index is in the OBJ extension's palettes (SIM_SetObjExtension)
+#define OBJ_PIXEL_EXT_PLTT 0x200000
 void G2SIM_DrawBG( u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub );
 BOOL G2SIM_HasFieldSprites(void);
 BOOL G2SIM_IsFieldMoveCutInWide(void);
