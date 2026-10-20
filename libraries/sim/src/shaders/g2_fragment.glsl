@@ -33,6 +33,7 @@ uniform float presentationWidth;
 uniform float borderWidth;
 uniform float fieldWidth;
 uniform bool fieldOverlayTiled;
+uniform int fieldTransitionMask;
 // SIM_SetFieldEdgeRows: a main-engine BG layer whose edge dots carry on into the wide view's sides on rows
 // [edgeRows.x, edgeRows.y), or -1
 uniform int edgeLayer;
@@ -67,6 +68,11 @@ vec4 sampleBg(int layer) {
         return texture(bgTexture[layer], uiCoord);
     }
     if ((windowMask & (1 << layer)) == 0) return vec4(0.0);
+    if (layer == fieldTransitionMask) {
+        // A screen-covering wipe uses the whole viewport, independently of
+        // the native UI and the wider 3D world beneath its transparent dots.
+        return texture(bgTexture[layer], fragTexCoord);
+    }
     if (layer == 0 && bg0as3d != 0) {
         vec4 scene = texture(bgTexture[layer], worldCoord);
         // Rendering into transparent black stores premultiplied RGB. Recover

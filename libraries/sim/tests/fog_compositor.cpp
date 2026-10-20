@@ -49,7 +49,7 @@ int main() {
     EGLConfig config;
     EGLint count;
     if (!eglChooseConfig(display, attributes, &config, 1, &count) || count == 0) return 2;
-    EGLint surfaceAttributes[] = {EGL_WIDTH, 8, EGL_HEIGHT, 8, EGL_NONE};
+    EGLint surfaceAttributes[] = {EGL_WIDTH, 448, EGL_HEIGHT, 8, EGL_NONE};
     EGLSurface surface = eglCreatePbufferSurface(display, config, surfaceAttributes);
     EGLint contextAttributes[] = {EGL_CONTEXT_MAJOR_VERSION, 4, EGL_CONTEXT_MINOR_VERSION,
         2, EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE};
@@ -109,6 +109,7 @@ int main() {
     glUniform1i(location("fieldParticlesTexture"), 7);
     glUniform1i(location("objWindowTexture"), 3);
     glUniform1i(location("bg0as3d"), 1);
+    glUniform1i(location("fieldTransitionMask"), -1);
     glUniform1f(location("presentationWidth"), 448);
     glUniform1f(location("fieldWidth"), 448);
     glUniform4f(location("backdropColor"), 0, 0, 0, 1);
@@ -156,6 +157,73 @@ int main() {
             }
         }
     }
+    // Galactic BG3 wipe: transparent openings retain the wide scene and
+    // native-size OBJ; the opaque final frame must reach both outer columns.
+    glUniform1f(location("g3FogAlpha"), 1.f);
+    unsigned char clearFog[] = {0, 0, 0, 0};
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, clearFog);
+    std::vector<unsigned char> world(448 * 4), object(256 * 4), wipe(256 * 4);
+    for (int x = 0; x < 448; x++) {
+        world[x * 4] = x / 2;
+        world[x * 4 + 2] = 128;
+        world[x * 4 + 3] = 255;
+    }
+    for (int x = 112; x < 144; x++) {
+        object[x * 4] = 255;
+        object[x * 4 + 3] = 255;
+    }
+    auto upload = [&](int unit, int width, const std::vector<unsigned char> &data) {
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glBindTexture(GL_TEXTURE_2D, textures[unit]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());
+    };
+    upload(0, 448, world);
+    upload(4, 256, object);
+    GLint backgrounds[] = {0, 3, 3, 2};
+    GLint objects[] = {3, 4, 3, 3, 3};
+    glUniform1iv(location("bgTexture"), 4, backgrounds);
+    glUniform1iv(location("objTexture"), 5, objects);
+    for (int row = 0; row < 384; row++) {
+        blend[row * 4] = 0; // No color effects.
+        blend[row * 4 + 3] = 3 | (3 << 2) | (3 << 4); // BG3 in front.
+    }
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, textures[6]);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 384, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, blend.data());
+    for (int width : {256, 342, 448}) {
+        glViewport(0, 0, width, 8);
+        glUniform1f(location("presentationWidth"), width);
+        glUniform1f(location("fieldWidth"), width);
+        for (int enabled : {0, 1}) {
+            glUniform1i(location("fieldTransitionMask"), enabled ? 3 : -1);
+            for (int stage = 0; stage < 3; stage++) {
+                for (int x = 0; x < 256; x++) {
+                    wipe[x * 4 + 3] = stage == 2 || (stage == 1 && x % 64 < 32) ? 255 : 0;
+                }
+                upload(2, 256, wipe);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                std::vector<unsigned char> result(width * 4);
+                glReadPixels(0, 2, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+                for (int x = 0; x < width; x++) {
+                    int nativeX = int(std::floor(128.f + x + .5f - width / 2.f));
+                    int maskX = enabled ? int((x + .5f) * 256 / width) : nativeX;
+                    bool covered = maskX >= 0 && maskX < 256 && wipe[maskX * 4 + 3];
+                    bool obj = nativeX >= 112 && nativeX < 144;
+                    int worldX = int(std::floor(224.f + x + .5f - width / 2.f));
+                    int expected[] = {covered ? 0 : (obj ? 255 : worldX / 2), 0,
+                        covered || obj ? 0 : 128};
+                    for (int c = 0; c < 3; c++) if (std::abs(int(result[x * 4 + c]) - expected[c]) > 1) {
+                        std::fprintf(stderr, "FAIL: wipe width=%d enabled=%d stage=%d x=%d c=%d got=%d expected=%d\n",
+                            width, enabled, stage, x, c, result[x * 4 + c], expected[c]);
+                        return 6;
+                    }
+                }
+            }
+        }
+    }
+    std::puts("PASS: BG3 wipe at 4:3, 16:9 and 21:9; native OBJ, wide world, transparent openings, full coverage, reset");
     if (glGetError() != GL_NO_ERROR) return 5;
     std::puts("PASS: route fog, dark gym, flashlight reveal, and gym-to-weather transition with backdrop/OBJ and BG2 overlay");
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
