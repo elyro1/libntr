@@ -95,8 +95,8 @@ float RainRings(vec2 pixelPosition, float time, int reach)
             float radius = 0.5 + life * 3.5;
             float d = length(vec2(pixel) + 0.5 - center);
             // Half of the cells are dry at any time, so drops stay sparse.
-            float dropActive = ((h >> 20) & 1u) == 1u ? 1.0 : 0.0;
-            brightness = max(brightness, (1.0 - smoothstep(0.35, 0.75, abs(d - radius))) * (1.0 - life) * dropActive);
+            float ringActive = ((h >> 20) & 1u) == 1u ? 1.0 : 0.0;
+            brightness = max(brightness, (1.0 - smoothstep(0.35, 0.75, abs(d - radius))) * (1.0 - life) * ringActive);
         }
     return brightness;
 }
@@ -495,3 +495,4 @@ void main()
     }
 }
 )""
+
