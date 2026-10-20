@@ -128,10 +128,11 @@ void NewFrame() {
     ImGui::NewFrame();
 }
 
-void ProcessEvent(SDL_Event * event) {
+bool ProcessEvent(SDL_Event * event) {
     if(sEnabled) {
         ImGui_ImplSDL2_ProcessEvent(event);
     }
+    return AppPadProcessEvent(event, sEnabled && sShowAppPad);
 }
 
 void Render() {

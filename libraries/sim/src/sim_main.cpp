@@ -37,6 +37,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/sim_frame_pacer.h>
 #include <simulator/sim_frame_profile.h>
 #include <simulator/sim_gui.hpp>
+#include <simulator/sim_direction_input.hpp>
 #include <simulator/sim_net.h>
 #include <simulator/sim_shaders.hpp>
 #include <simulator/simvariables.h>
@@ -1367,6 +1368,9 @@ static void DrawEngine(BOOL isSub) {
 #endif
 }
 
+static unsigned s_KeyboardDirections = 0;
+static bool s_DirectionalInputFocused = true;
+
 static void HandleJoystickKeyDown(int aKey) {
   if (aKey == s_SIM_config.padSettings.aJoyKey) {
     // A Button
@@ -1380,18 +1384,6 @@ static void HandleJoystickKeyDown(int aKey) {
   } else if (aKey == s_SIM_config.padSettings.yJoyKey) {
     // y Button
     *(vu16 *)HW_BUTTON_XY_BUF = *(vu16 *)HW_BUTTON_XY_BUF & 0b1111010000000000;
-  } else if (aKey == s_SIM_config.padSettings.upJoyKey) {
-    // Dpad Up
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111110111111;
-  } else if (aKey == s_SIM_config.padSettings.downJoyKey) {
-    // Dpad Down
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111101111111;
-  } else if (aKey == s_SIM_config.padSettings.leftJoyKey) {
-    // Dpad Left
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111011111;
-  } else if (aKey == s_SIM_config.padSettings.rightJoyKey) {
-    // Dpad Right
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111101111;
   } else if (aKey == s_SIM_config.padSettings.lJoyKey) {
     // L
     s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111110111111111;
@@ -1426,18 +1418,6 @@ static void HandleJoystickKeyUp(int aKey) {
   } else if (aKey == s_SIM_config.padSettings.yJoyKey) {
     // y Button
     *(vu16 *)HW_BUTTON_XY_BUF = *(vu16 *)HW_BUTTON_XY_BUF | 0b0000100000000000;
-  } else if (aKey == s_SIM_config.padSettings.upJoyKey) {
-    // Dpad Up
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000001000000;
-  } else if (aKey == s_SIM_config.padSettings.downJoyKey) {
-    // Dpad Down
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000010000000;
-  } else if (aKey == s_SIM_config.padSettings.leftJoyKey) {
-    // Dpad Left
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000000100000;
-  } else if (aKey == s_SIM_config.padSettings.rightJoyKey) {
-    // Dpad Right
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000000010000;
   } else if (aKey == s_SIM_config.padSettings.lJoyKey) {
     // L
     s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000001000000000;
@@ -1661,6 +1641,11 @@ void *SIM_Render(void *arg) {
       }
     }
 
+    // A detached joystick must be closed before opening a replacement.
+    if (s_SIM_SDLJoystick && !SDL_JoystickGetAttached(s_SIM_SDLJoystick)) {
+      SDL_JoystickClose(s_SIM_SDLJoystick);
+      s_SIM_SDLJoystick = NULL;
+    }
     // Check Joysticks
     if (s_SIM_SDLJoystick == NULL && SDL_NumJoysticks() >= 1) {
       s_SIM_SDLJoystick = SDL_JoystickOpen(0);
@@ -1668,10 +1653,17 @@ void *SIM_Render(void *arg) {
 
     SIM_Autopilot_Frame();
     while (SDL_PollEvent(&Event)) {
-      SIM::GUI::ProcessEvent(&Event);
+      if (SIM::GUI::ProcessEvent(&Event)) continue;
 
       if (Event.type == SDL_WINDOWEVENT) {
         switch (Event.window.event) {
+        case SDL_WINDOWEVENT_FOCUS_LOST:
+          s_KeyboardDirections = 0;
+          s_DirectionalInputFocused = false;
+          break;
+        case SDL_WINDOWEVENT_FOCUS_GAINED:
+          s_DirectionalInputFocused = true;
+          break;
         case SDL_WINDOWEVENT_CLOSE:
           exit(0);
           break;
@@ -1708,16 +1700,16 @@ void *SIM_Render(void *arg) {
               *(vu16 *)HW_BUTTON_XY_BUF & 0b1111010000000000;
         } else if (keyRead == s_SIM_config.padSettings.upKey) {
           // Dpad Up
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111110111111;
+          s_KeyboardDirections |= 0x40u;
         } else if (keyRead == s_SIM_config.padSettings.downKey) {
           // Dpad Down
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111101111111;
+          s_KeyboardDirections |= 0x80u;
         } else if (keyRead == s_SIM_config.padSettings.leftKey) {
           // Dpad Left
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111011111;
+          s_KeyboardDirections |= 0x20u;
         } else if (keyRead == s_SIM_config.padSettings.rightKey) {
           // Dpad Right
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111101111;
+          s_KeyboardDirections |= 0x10u;
         } else if (keyRead == s_SIM_config.padSettings.lKey) {
           // L
           s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111110111111111;
@@ -1753,16 +1745,16 @@ void *SIM_Render(void *arg) {
               *(vu16 *)HW_BUTTON_XY_BUF | 0b0000100000000000;
         } else if (keyRead == s_SIM_config.padSettings.upKey) {
           // Dpad Up
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000001000000;
+          s_KeyboardDirections &= ~0x40u;
         } else if (keyRead == s_SIM_config.padSettings.downKey) {
           // Dpad Down
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000010000000;
+          s_KeyboardDirections &= ~0x80u;
         } else if (keyRead == s_SIM_config.padSettings.leftKey) {
           // Dpad Left
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000000100000;
+          s_KeyboardDirections &= ~0x20u;
         } else if (keyRead == s_SIM_config.padSettings.rightKey) {
           // Dpad Right
-          s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000000000010000;
+          s_KeyboardDirections &= ~0x10u;
         } else if (keyRead == s_SIM_config.padSettings.lKey) {
           // L
           s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT | 0b0000001000000000;
@@ -1845,7 +1837,12 @@ void *SIM_Render(void *arg) {
         s_tpData.touch = 0;
       }
     }
-    s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT;
+    // Polling keeps overlapping bindings, remapping, disconnects and live
+    // deadzone changes independent of the order of SDL release events.
+    const unsigned joystickDirections = s_DirectionalInputFocused
+        ? SIM::Input::JoystickDirections(s_SIM_SDLJoystick, s_SIM_config.padSettings) : 0;
+    s_reg_PAD_KEYINPUT = SIM::Input::ApplyDirections(
+        s_reg_PAD_KEYINPUT, s_KeyboardDirections, joystickDirections);
 
     SDL_GetMouseState(&x, &y);
 

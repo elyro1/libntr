@@ -14,6 +14,8 @@ typedef enum {
 #define SIM_CONFIG_JOY_AXIS_PLUS_MASK (0x20000)
 #define SIM_CONFIG_JOY_AXIS_MINUS_MASK (0x40000)
 #define SIM_CONFIG_JOY_INVALID_KEY (-1)
+#define SIM_CONFIG_JOY_DEFAULT_DEADZONE (32767 / 4)
+#define SIM_CONFIG_JOY_MAX_DEADZONE (32767 * 95 / 100)
 
 typedef struct {
     int aKey;
@@ -42,6 +44,10 @@ typedef struct {
     int downJoyKey;
     int leftJoyKey;
     int rightJoyKey;
+    int upJoyKeySecondary;
+    int downJoyKeySecondary;
+    int leftJoyKeySecondary;
+    int rightJoyKeySecondary;
     int lJoyKey;
     int rJoyKey;
     int startJoyKey;

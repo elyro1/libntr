@@ -83,7 +83,16 @@ static int IniHandler(void* user, const char* section, const char* name,
 
     // PAD
     if(MATCH("PAD", "JoyAxisDeadzone")) {
-        config->padSettings.joyAxisDeadzone = atoi(value);
+        char *end;
+        errno = 0;
+        long deadzone = strtol(value, &end, 10);
+        BOOL parsed = end != value;
+        while (isspace((unsigned char)*end)) ++end;
+        config->padSettings.joyAxisDeadzone = (!parsed || *end || errno)
+            ? SIM_CONFIG_JOY_DEFAULT_DEADZONE
+            : deadzone < 0 ? 0
+            : deadzone > SIM_CONFIG_JOY_MAX_DEADZONE ? SIM_CONFIG_JOY_MAX_DEADZONE
+            : (int)deadzone;
     }
     if(MATCH("PAD", "AKey")) {
         config->padSettings.aKey = atoi(value);
@@ -142,14 +151,26 @@ static int IniHandler(void* user, const char* section, const char* name,
     if(MATCH("PAD", "YJoyKey")) {
         config->padSettings.yJoyKey = atoi(value);
     }
+    if(MATCH("PAD", "UpJoyKeySecondary")) {
+        config->padSettings.upJoyKeySecondary = atoi(value);
+    }
     if(MATCH("PAD", "UpJoyKey")) {
         config->padSettings.upJoyKey = atoi(value);
+    }
+    if(MATCH("PAD", "DownJoyKeySecondary")) {
+        config->padSettings.downJoyKeySecondary = atoi(value);
     }
     if(MATCH("PAD", "DownJoyKey")) {
         config->padSettings.downJoyKey = atoi(value);
     }
+    if(MATCH("PAD", "LeftJoyKeySecondary")) {
+        config->padSettings.leftJoyKeySecondary = atoi(value);
+    }
     if(MATCH("PAD", "LeftJoyKey")) {
         config->padSettings.leftJoyKey = atoi(value);
+    }
+    if(MATCH("PAD", "RightJoyKeySecondary")) {
+        config->padSettings.rightJoyKeySecondary = atoi(value);
     }
     if(MATCH("PAD", "RightJoyKey")) {
         config->padSettings.rightJoyKey = atoi(value);
@@ -379,7 +400,11 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->masterVolume = 50;
     aConfig->fastForwardMultiplier = 5.0f;
 
-    aConfig->padSettings.joyAxisDeadzone = 32767 / 4;
+    aConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
+    aConfig->padSettings.upJoyKeySecondary = SIM_CONFIG_JOY_AXIS_MINUS_MASK | 1;
+    aConfig->padSettings.downJoyKeySecondary = SIM_CONFIG_JOY_AXIS_PLUS_MASK | 1;
+    aConfig->padSettings.leftJoyKeySecondary = SIM_CONFIG_JOY_AXIS_MINUS_MASK;
+    aConfig->padSettings.rightJoyKeySecondary = SIM_CONFIG_JOY_AXIS_PLUS_MASK;
     aConfig->padSettings.aKey = SDLK_z;
     aConfig->padSettings.bKey = SDLK_x;
     aConfig->padSettings.xKey = SDLK_c;
@@ -490,9 +515,13 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     fprintf(configFile, "XJoyKey=%d\n", aConfig->padSettings.xJoyKey);
     fprintf(configFile, "YJoyKey=%d\n", aConfig->padSettings.yJoyKey);
     fprintf(configFile, "UpJoyKey=%d\n", aConfig->padSettings.upJoyKey);
+    fprintf(configFile, "UpJoyKeySecondary=%d\n", aConfig->padSettings.upJoyKeySecondary);
     fprintf(configFile, "DownJoyKey=%d\n", aConfig->padSettings.downJoyKey);
+    fprintf(configFile, "DownJoyKeySecondary=%d\n", aConfig->padSettings.downJoyKeySecondary);
     fprintf(configFile, "LeftJoyKey=%d\n", aConfig->padSettings.leftJoyKey);
+    fprintf(configFile, "LeftJoyKeySecondary=%d\n", aConfig->padSettings.leftJoyKeySecondary);
     fprintf(configFile, "RightJoyKey=%d\n", aConfig->padSettings.rightJoyKey);
+    fprintf(configFile, "RightJoyKeySecondary=%d\n", aConfig->padSettings.rightJoyKeySecondary);
     fprintf(configFile, "LJoyKey=%d\n", aConfig->padSettings.lJoyKey);
     fprintf(configFile, "RJoyKey=%d\n", aConfig->padSettings.rJoyKey);
     fprintf(configFile, "StartJoyKey=%d\n", aConfig->padSettings.startJoyKey);

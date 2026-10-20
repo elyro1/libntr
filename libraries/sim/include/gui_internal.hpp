@@ -6,6 +6,7 @@ void AppConfigInit();
 void AppConfigMain(bool * openState);
 void AppNetInit();
 void AppNetMain(bool * openState);
+bool AppPadProcessEvent(SDL_Event *event, bool active);
 void AppPadInit();
 void AppPadMain(bool * openState);
 
