@@ -144,6 +144,9 @@ void SIM_SetScreenFadeWindows(BOOL main, BOOL sub);
 void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled);
 // Continue selected field sprites past the native screen edges without repeating.
 void SIM_SetFieldWideSpriteRange(u32 address, u32 size, BOOL enabled);
+// Continue league banner sprites into the wide viewport using their 16-dot,
+// 12-color palette ramp. Border colors and transparent pixels are preserved.
+void SIM_SetFieldSpriteEdgeRange(u32 address, u32 size, BOOL enabled);
 u64 SIM_GetRenderFrameTime();
 // Session-only, nonblocking whole-frame GPU timing on the render context.
 void SIM_SetRenderGpuProfiling(BOOL enabled);

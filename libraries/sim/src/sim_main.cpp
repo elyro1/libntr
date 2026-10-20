@@ -1154,13 +1154,38 @@ static void DrawEngine(BOOL isSub) {
   if (fieldParticlesEnabled) {
     glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
     glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
+    const bool extendEdges = G2SIM_HasFieldSpriteEdges();
+    const int nativeLeft = (SIM_FIELD_SPRITE_WIDTH - SIM_NDS_SCREEN_WIDTH) / 2;
     for (int priority = 0; priority < 4; priority++) {
       memset(s_FieldParticlesPixels, 0, sizeof(s_FieldParticlesPixels));
       for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
         memset(s_FieldSpriteLine, 0, sizeof(u32) * SIM_FIELD_SPRITE_WIDTH);
         G2SIM_DrawOBJ(line, FALSE, priority << 10, TRUE);
         for (int x = 0; x < SIM_FIELD_SPRITE_WIDTH; x++) {
-          const u8 index = s_FieldSpriteLine[x] & 0xFF;
+          // Continue the league banner's 16-dot palette ramp, including its
+          // moving jagged boundaries. Repeating raw strips would restart the
+          // gradient every 32 dots and leave visible vertical joins.
+          // Portraits and the VS logo are not registered in this buffer.
+          int sampleX = x;
+          if (extendEdges && x < nativeLeft) {
+            sampleX = nativeLeft + ((x - nativeLeft) & 31);
+          } else if (extendEdges && x >= nativeLeft + SIM_NDS_SCREEN_WIDTH) {
+            sampleX = nativeLeft + SIM_NDS_SCREEN_WIDTH - 32 + ((x - nativeLeft) & 31);
+          }
+          u8 index = s_FieldSpriteLine[sampleX] & 0xFF;
+          if (extendEdges && sampleX != x && (index & 15) >= 1 && (index & 15) <= 12) {
+            // The two halves face opposite ways. Read the ramp direction from
+            // two matching pattern phases instead of assuming either flip.
+            const int stripLeft = x < nativeLeft ? nativeLeft : nativeLeft + SIM_NDS_SCREEN_WIDTH - 32;
+            const int first = s_FieldSpriteLine[stripLeft] & 15;
+            const int second = s_FieldSpriteLine[stripLeft + 16] & 15;
+            if (first >= 1 && first <= 12 && second >= 1 && second <= 12) {
+              const int step = second - first;
+              int shade = ((index & 15) - 1 + step * ((x - sampleX) / 16)) % 12;
+              if (shade < 0) shade += 12;
+              index = (index & 0xF0) | (shade + 1);
+            }
+          }
           if (index) {
             u8 r, g, b;
             SIM_u16ToRGB(((u16 *)s_HW_OBJ_PLTT)[index], &r, &g, &b);

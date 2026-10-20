@@ -5,6 +5,7 @@
 #define OBJ_PIXEL_EXT_PLTT 0x200000
 void G2SIM_DrawBG( u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub );
 BOOL G2SIM_HasFieldSprites(void);
+BOOL G2SIM_HasFieldSpriteEdges(void);
 BOOL G2SIM_IsFieldMoveCutInWide(void);
 extern u32 s_FieldSpriteLine[];
 void G2SIM_DrawOBJ( u32 line, u8 isSub, int bgnum, BOOL fieldOnly );

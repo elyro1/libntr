@@ -347,22 +347,23 @@ void G2SIM_DrawBG(u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub) {
 #endif
 }
 
-static struct { u32 address; u32 size; BOOL repeat; } s_FieldSpriteRanges[16];
+static struct { u32 address; u32 size; BOOL repeat; BOOL extendEdges; } s_FieldSpriteRanges[16];
 static BOOL s_FieldSpriteDraw = FALSE;
 u32 s_FieldSpriteLine[SIM_FIELD_SPRITE_WIDTH];
 static u8 s_FieldSpriteWindow[SIM_FIELD_SPRITE_WIDTH];
 
-static void SetFieldSpriteRange(u32 address, u32 size, BOOL enabled, BOOL repeat) {
+static void SetFieldSpriteRange(u32 address, u32 size, BOOL enabled, BOOL repeat, BOOL extendEdges = FALSE) {
   for (auto &range : s_FieldSpriteRanges) {
     if (range.size && range.address == address) {
       range.size = enabled ? size : 0;
       range.repeat = repeat;
+      range.extendEdges = extendEdges;
       return;
     }
   }
   if (enabled) {
     for (auto &range : s_FieldSpriteRanges) {
-      if (!range.size) { range.address = address; range.size = size; range.repeat = repeat; return; }
+      if (!range.size) { range.address = address; range.size = size; range.repeat = repeat; range.extendEdges = extendEdges; return; }
     }
   }
 }
@@ -373,6 +374,17 @@ void SIM_SetFieldTiledSpriteRange(u32 address, u32 size, BOOL enabled) {
 
 void SIM_SetFieldWideSpriteRange(u32 address, u32 size, BOOL enabled) {
   SetFieldSpriteRange(address, size, enabled, FALSE);
+}
+
+void SIM_SetFieldSpriteEdgeRange(u32 address, u32 size, BOOL enabled) {
+  SetFieldSpriteRange(address, size, enabled, FALSE, TRUE);
+}
+
+BOOL G2SIM_HasFieldSpriteEdges(void) {
+  for (const auto &range : s_FieldSpriteRanges) {
+    if (range.size && range.extendEdges) return TRUE;
+  }
+  return FALSE;
 }
 
 BOOL G2SIM_HasFieldSprites(void) {
