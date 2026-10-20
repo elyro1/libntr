@@ -356,6 +356,10 @@ int SIM_Get3DAntialiasingSamples(void) { return s3DTarget.Samples(); }
 void SIM_SetLightingCorrection(BOOL enabled) { G3SIM_SetLightingCorrection(enabled); }
 void SIM_SetFieldEffect(int mode, float phase) { G3SIM_SetFieldEffect(mode, phase); }
 void SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom) { G3SIM_SetFieldEmissiveEffect(mode, phase, bloom); }
+void SIM_SetFieldContactShadow(const float center[3], float radiusX, float radiusZ, float slopeX, float slopeZ, float strength) {
+  const float shadow[8] = { center[0], center[1], center[2], strength, radiusX, radiusZ, slopeX, slopeZ };
+  G3SIM_SetFieldContactShadow(shadow);
+}
 void SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection)
 {
     G3SIM_DrawWaterTiles(tiles, corners, count, phase, view, projection);
@@ -1990,6 +1994,8 @@ void *SIM_Render(void *arg) {
   // Activate 3D shader
   glUseProgram(g3shaderProgramID);
   G3SIM_SetFieldEffect(0, 0);
+  const float noContactShadow[8] = {};
+  G3SIM_SetFieldContactShadow(noContactShadow);
   SIM_SetFieldEmissionDebug(FALSE);
   // Enhancements are opt-in per field frame, including native-width fields.
   ResetFieldGrade();

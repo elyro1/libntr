@@ -26,6 +26,8 @@ uniform float fieldEffectPhase;
 // Per-material weight of the light this pixel adds to the bloom pass.
 uniform float fieldEmissionWeight;
 uniform int fieldSurface;
+// World center and strength; radii xz and slope xz. See mode 23.
+uniform vec4 fieldContactShadow[2];
 uniform int fieldWorld;
 uniform float fieldTime;
 uniform float fieldWetness;
@@ -232,7 +234,32 @@ void main()
         }
         if (coverage <= 0.0)
             discard;
-        shadedColor = vec4(0.10, 0.13, 0.16, fieldEffectPhase * coverage);
+        float alpha = fieldEffectPhase * coverage;
+        // Over the character's own contact shadow the darker of the two shows,
+        // rather than both stacking into a dark blot with the contact
+        // shadow's outline inside the cast shadow. The contact shadow lies on
+        // its own, lower plane: follow the view ray to the point of it seen
+        // here, so the two meet without a lighter seam. Falloff as mode 1.
+        if (hasWorld && fieldContactShadow[0].w > 0.0) {
+            vec3 center = fieldContactShadow[0].xyz;
+            vec2 slope = fieldContactShadow[1].zw;
+            vec3 ray = world - cameraWorld;
+            float rise = ray.y - dot(slope, ray.xz);
+            float t = abs(rise) > 0.0001
+                ? (center.y + dot(slope, cameraWorld.xz - center.xz) - cameraWorld.y) / rise : 1.0;
+            vec2 seen = cameraWorld.xz + ray.xz * t;
+            float radius = length((seen - center.xz) / fieldContactShadow[1].xy);
+            float contact = (1.0 - smoothstep(0.42, 1.0, radius)) * fieldContactShadow[0].w;
+            // A smooth maximum: a hard one bends sharply where the contact
+            // shadow's falloff meets the flat cast shadow, which reads as a
+            // light line. The rounding scales with the cast shadow, so faint
+            // edges and dusk shadows gain no halo.
+            float knee = alpha;
+            float h = max(knee - abs(contact - alpha), 0.0) / max(knee, 0.0001);
+            float darkest = max(contact, alpha) + h * h * knee * 0.25;
+            alpha = (darkest - contact) / max(1.0 - contact, 0.01);
+        }
+        shadedColor = vec4(0.10, 0.13, 0.16, alpha);
     }
     if (fieldEffectMode == 22 && useTexture == 1) {
         // Tree atlases paint the tree's shadow as a disc around the stump in

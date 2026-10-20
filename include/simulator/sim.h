@@ -76,6 +76,12 @@ void SIM_SetLightingCorrection(BOOL enabled);
 void SIM_SetFieldEffect(int mode, float phase);
 // As above; bloom weights the light an emissive material adds to the bloom.
 void SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom);
+// The contact shadow (effect 1) under the character whose cast shadow
+// (effect 23) is drawn next: its world center, radii, the slope of its plane
+// (height per unit x and z) and its strength. Where they overlap, the darker
+// of the two shows instead of both. Needs SIM_SetFieldWorld; zero strength
+// turns it off.
+void SIM_SetFieldContactShadow(const float center[3], float radiusX, float radiusZ, float slopeX, float slopeZ, float strength);
 // corners packs four 0-255 shore weights per tile, clockwise from the -x/-z corner.
 void SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection);
 void SIM_SetWaterProfiling(BOOL enabled);

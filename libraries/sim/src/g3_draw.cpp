@@ -72,6 +72,7 @@ static unsigned sDrawEpoch;
 static int sFieldEffectMode;
 static float sFieldEffectPhase;
 static float sFieldEffectBloom = 1;
+static float sFieldContactShadow[8];
 // World geometry (terrain, buildings) as opposed to sprites and overlays;
 // weather such as rain wets only these.
 static int sFieldSurface;
@@ -295,12 +296,18 @@ void G3SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom) {
     sFieldEffectPhase = phase;
     sFieldEffectBloom = bloom;
 }
-static void ApplyFieldEffect(int mode, float phase, float bloom, int surface) {
+void G3SIM_SetFieldContactShadow(const float shadow[8]) {
+    if (memcmp(shadow, sFieldContactShadow, sizeof(sFieldContactShadow)) == 0)
+        return;
+    G3SIM_FlushArray();
+    memcpy(sFieldContactShadow, shadow, sizeof(sFieldContactShadow));
+}
+static void ApplyFieldEffect(int mode, float phase, float bloom, int surface, const float contactShadow[8]) {
     static GLuint program;
     static unsigned epoch;
-    static GLint modeLocation, phaseLocation, bloomLocation, surfaceLocation;
+    static GLint modeLocation, phaseLocation, bloomLocation, surfaceLocation, contactLocation;
     static int appliedMode = -1, appliedSurface = -1;
-    static float appliedPhase = -1, appliedBloom = -1;
+    static float appliedPhase = -1, appliedBloom = -1, appliedContact[8] = { -1 };
     if (program != g3shaderProgramID || epoch != sDrawEpoch) {
         epoch = sDrawEpoch;
         program = g3shaderProgramID;
@@ -308,7 +315,9 @@ static void ApplyFieldEffect(int mode, float phase, float bloom, int surface) {
         phaseLocation = glGetUniformLocation(program, "fieldEffectPhase");
         bloomLocation = glGetUniformLocation(program, "fieldEmissionWeight");
         surfaceLocation = glGetUniformLocation(program, "fieldSurface");
+        contactLocation = glGetUniformLocation(program, "fieldContactShadow");
         appliedMode = -1;
+        appliedContact[3] = -1;
         appliedSurface = -1;
         appliedPhase = -1;
         appliedBloom = -1;
@@ -330,6 +339,10 @@ static void ApplyFieldEffect(int mode, float phase, float bloom, int surface) {
     if (appliedSurface != surface) {
         glProgramUniform1i(program, surfaceLocation, surface);
         appliedSurface = surface;
+    }
+    if (memcmp(appliedContact, contactShadow, sizeof(appliedContact)) != 0) {
+        glProgramUniform4fv(program, contactLocation, 2, contactShadow);
+        memcpy(appliedContact, contactShadow, sizeof(appliedContact));
     }
 }
 
@@ -444,6 +457,7 @@ typedef struct {
     int fieldEffectMode;
     float fieldEffectPhase;
     float fieldEffectBloom;
+    float fieldContactShadow[8];
     int fieldSurface;
 	G3SIM_TexImageParam_t texImageParam;
 	G3SIM_Vertex_t * verts;
@@ -594,7 +608,7 @@ void G3SIM_DrawArray()
 {
 	if( s_G3DrawCurVertIdx != 0 )
 	{
-		ApplyFieldEffect(sFieldEffectMode, sFieldEffectPhase, sFieldEffectBloom, sFieldSurface);
+		ApplyFieldEffect(sFieldEffectMode, sFieldEffectPhase, sFieldEffectBloom, sFieldSurface, sFieldContactShadow);
 		G3SIM_ApplyDepthViewport();
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), s_SIM_useWBuffer);
         GLint first = UploadDrawVertices(s_G3DrawVerts, s_G3DrawCurVertIdx);
@@ -956,6 +970,7 @@ void G3SIM_FlushArray()
             item->fieldEffectMode = sFieldEffectMode;
             item->fieldEffectPhase = sFieldEffectPhase;
             item->fieldEffectBloom = sFieldEffectBloom;
+            memcpy(item->fieldContactShadow, sFieldContactShadow, sizeof(sFieldContactShadow));
             item->fieldSurface = sFieldSurface;
             item->useWBuffer = s_SIM_useWBuffer;
 
@@ -1021,7 +1036,7 @@ void G3SIM_DrawItems()
 
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), item->useWBuffer);
 		G3SIM_ApplyFog(item->fog);
-        ApplyFieldEffect(item->fieldEffectMode, item->fieldEffectPhase, item->fieldEffectBloom, item->fieldSurface);
+        ApplyFieldEffect(item->fieldEffectMode, item->fieldEffectPhase, item->fieldEffectBloom, item->fieldSurface, item->fieldContactShadow);
 		G3SIM_ApplyPolygonRasterState(item->polygonAttr);
 		glDepthMask(item->polygonAttr.translucentDepth ? GL_TRUE : GL_FALSE);
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "alphaPass"), 2);

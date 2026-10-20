@@ -46,6 +46,8 @@ void G3SIM_SetFieldEmitterCollection(BOOL enabled, const float worldFromClip[9],
 void G3SIM_EndFieldEmitterCollection(void);
 // bloom scales the emission this effect contributes to the bloom pass.
 void G3SIM_SetFieldEmissiveEffect(int mode, float phase, float bloom);
+// Center x, y, z, strength, radius x, z, slope x, z; see SIM_SetFieldContactShadow.
+void G3SIM_SetFieldContactShadow(const float shadow[8]);
 // corners packs four shore weights per tile (byte i: corner i, clockwise from -x/-z).
 void G3SIM_DrawWaterTiles(const VecFx32 *tiles, const u32 *corners, int count, float phase, const MtxFx43 *view, const MtxFx44 *projection);
 void G3SIM_SetWaterProfiling(BOOL enabled);
