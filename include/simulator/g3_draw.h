@@ -40,6 +40,8 @@ void G3SIM_DrawInit();
 void G3SIM_ClearTextureCache();
 u32 G3SIM_PrewarmTexture(u32 image, u32 palette);
 void G3SIM_FlushArray();
+// Captured per polygon, including deferred translucent draws.
+void G3SIM_SetTextureSmoothing(BOOL enabled);
 void G3SIM_SetFieldEffect(int mode, float phase);
 void G3SIM_SetFieldSurface(int surface);
 void G3SIM_SetFieldEmitterCollection(BOOL enabled, const float worldFromClip[9], const float offset[3]);

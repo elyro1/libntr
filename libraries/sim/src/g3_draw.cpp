@@ -31,6 +31,7 @@
 
 struct G3Texture {
     GLuint id = 0;
+    bool smooth = false;
     u32 width, height, format, color0, refs = 0;
     u64 used;
     std::vector<u8> source, palette;
@@ -70,6 +71,25 @@ static void G3SIM_TrimTextures(G3Texture *keep) {
 }
 
 static unsigned sDrawEpoch;
+static bool sTextureSmoothing;
+
+void G3SIM_SetTextureSmoothing(BOOL enabled)
+{
+    if (sTextureSmoothing == (enabled != FALSE)) return;
+    G3SIM_FlushArray();
+    sTextureSmoothing = enabled != FALSE;
+}
+
+// The texture cache is shared by immediate and deferred polygons. Apply the
+// requesting polygon's filter each time a cached texture changes between them.
+static void ApplyTextureSmoothing(G3Texture *texture, bool enabled)
+{
+    if (!texture || texture->smooth == enabled) return;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, enabled ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, enabled ? GL_LINEAR : GL_NEAREST);
+    texture->smooth = enabled;
+}
+
 static int sFieldEffectMode;
 static float sFieldEffectPhase;
 static float sFieldEffectBloom = 1;
@@ -453,6 +473,7 @@ typedef struct {
 	u8 useWBuffer;
 	GLuint textureId;
 	G3Texture *texture;
+	bool smoothTexture;
 	G3SIM_PolygonAttr_t polygonAttr;
 	g3_fog_state_t fog;
     int fieldEffectMode;
@@ -911,6 +932,7 @@ void G3SIM_FlushArray()
 
 	const u64 textureProfile = SIM_ProfileNow();
 	G3Texture *texture = G3SIM_AcquireTexture();
+	ApplyTextureSmoothing(texture, sTextureSmoothing);
 	CommitEmitters(texture);
     if (texture) {
 
@@ -968,6 +990,7 @@ void G3SIM_FlushArray()
             }
 
             item->fog = fog;
+            item->smoothTexture = sTextureSmoothing;
             item->fieldEffectMode = sFieldEffectMode;
             item->fieldEffectPhase = sFieldEffectPhase;
             item->fieldEffectBloom = sFieldEffectBloom;
@@ -1021,6 +1044,7 @@ void G3SIM_DrawItems()
 		if(item->textureId != 0){
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, item->textureId);
+            ApplyTextureSmoothing(item->texture, item->smoothTexture);
 			//Enable texture in the shader
 			glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useTexture") , 1);
 		} else {
