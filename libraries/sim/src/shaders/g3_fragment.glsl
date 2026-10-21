@@ -330,14 +330,17 @@ void main()
         // Buildings whose lights share a texture with plain walls: only
         // strongly colored texels light up. 14 keeps their own color (neon
         // bulbs), 16 turns them into warm lit windows.
-        // Saturation of the shaded color covers both colored textures and
-        // gray textures tinted by their material color.
+        // Neon is keyed from the texture: warm dusk lighting can make the
+        // Game Corner's beige roof as saturated as its bulbs. Window panes
+        // also use material colors to tint otherwise gray textures.
+        vec3 source = useTexture == 1 ? texel.rgb : shadedColor.rgb;
+        vec3 keyColor = fieldEffectMode == 14 ? source : shadedColor.rgb;
+        float keyPeak = max(keyColor.r, max(keyColor.g, keyColor.b));
+        float saturation = (keyPeak - min(keyColor.r, min(keyColor.g, keyColor.b))) / max(keyPeak, 0.001);
         float peak = max(shadedColor.r, max(shadedColor.g, shadedColor.b));
-        float saturation = (peak - min(shadedColor.r, min(shadedColor.g, shadedColor.b))) / max(peak, 0.001);
         float key = fieldEffectMode == 14 ? smoothstep(0.40, 0.60, saturation) : smoothstep(0.08, 0.16, saturation);
         float lit = clamp(fieldEffectPhase,0.0,1.0) * key;
-        vec3 source = useTexture == 1 ? texel.rgb : vec3(1.0);
-        float brightness = max(source.r, max(source.g, source.b));
+        float brightness = useTexture == 1 ? max(source.r, max(source.g, source.b)) : 1.0;
         vec3 glow = fieldEffectMode == 14 ? shadedColor.rgb / max(peak, 0.001) * brightness
             : vec3(1.0,0.78,0.38) * sqrt(brightness);
         shadedColor.rgb = mix(Grade(shadedColor.rgb), glow, lit);
