@@ -11,6 +11,7 @@
 #include <simulator/g3_handler.h>
 #include <simulator/sim_crc32.h>
 #include <simulator/sim_frame_profile.h>
+#include <simulator/sim_polygon_stencil.hpp>
 #include <stddef.h>
 #include <string.h>
 #include <unordered_map>
@@ -1016,7 +1017,7 @@ void G3SIM_DrawItems()
 	//Draws all the translucent objects that were deferred to the end of the frame.
 	for(int i=0; i<s_G3DrawItemListCount; i++) {
 		g3_draw_item_t * item = &s_G3DrawItemList[i];
-		glStencilFunc(GL_NOTEQUAL, 0x40 | item->polygonAttr.polygonId, 0x7f);
+        SIM_ApplyPolygonStencil(item->fieldEffectMode, item->polygonAttr.polygonId);
 		if(item->textureId != 0){
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, item->textureId);
