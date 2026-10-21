@@ -856,31 +856,26 @@ void G3SIM_LightColor(u32 data)
     s_G3LightColor[lightNum][2] = lightBlue << 3;
 }
 
+// NORMAL and LIGHT_VECTOR use signed 1.9 fixed-point components.
+static float DecodeVectorComponent(u32 data, unsigned shift)
+{
+    int value = (data >> shift) & 0x3ff;
+    if (value & 0x200) value -= 0x400;
+    return value / 512.0f;
+}
+
 void G3SIM_LightVector(u32 data)
 {
-    u8 lightVecX = (data & 0b1111111111);
-    u8 lightVecXSign = (lightVecX & 0b1000000000) >> 9;
-    lightVecX = lightVecX & 0b111111111;
-    u8 lightVecY = (data & 0b11111111110000000000) >> 10;
-    u8 lightVecYSign = (lightVecY & 0b1000000000) >> 9;
-    lightVecY = lightVecY & 0b111111111;
-    u8 lightVecZ = (data & 0b111111111100000000000000000000) >> 20;
-    u8 lightVecZSign = (lightVecZ & 0b1000000000) >> 9;
-    lightVecZ = lightVecZ & 0b111111111;
-    u8 lightNum = (data & 0b11000000000000000000000000000000) >> 30;
-
-    // Should get us a number from -1 to 1
-    s_G3LightVector[lightNum][0] = (float)lightVecX / 511.0f;
-    if(lightVecXSign) {
-        s_G3LightVector[lightNum][0] = s_G3LightVector[lightNum][0] * -1.0f;
-    }
-    s_G3LightVector[lightNum][1] = (float)lightVecY / 511.0f;
-    if(lightVecYSign) {
-        s_G3LightVector[lightNum][1] = s_G3LightVector[lightNum][1] * -1.0f;
-    }
-    s_G3LightVector[lightNum][2] = (float)lightVecZ / 511.0f;
-    if(lightVecZSign) {
-        s_G3LightVector[lightNum][2] = s_G3LightVector[lightNum][2] * -1.0f;
+    const unsigned lightNum = data >> 30;
+    const float vector[3] = {DecodeVectorComponent(data, 0),
+                            DecodeVectorComponent(data, 10),
+                            DecodeVectorComponent(data, 20)};
+    // Capture the light in eye space when submitted, before model transforms.
+    for (int axis = 0; axis < 3; ++axis) {
+        s_G3LightVector[lightNum][axis] =
+            vector[0] * FX_FX32_TO_F32(currentVectorMatrix.nums[0][axis]) +
+            vector[1] * FX_FX32_TO_F32(currentVectorMatrix.nums[1][axis]) +
+            vector[2] * FX_FX32_TO_F32(currentVectorMatrix.nums[2][axis]);
     }
 }
 
@@ -1306,30 +1301,9 @@ void G3SIM_MtxTranslate(fx32* trans)
 
 void G3SIM_Normal(u32 data)
 {
-    u8 vecX = (data & 0b1111111111);
-    u8 vecXSign = (vecX & 0b1000000000) >> 9;
-    vecX = vecX & 0b111111111;
-    u8 vecY = (data & 0b11111111110000000000) >> 10;
-    u8 vecYSign = (vecY & 0b1000000000) >> 9;
-    vecY = vecY & 0b111111111;
-    u8 vecZ = (data & 0b111111111100000000000000000000) >> 20;
-    u8 vecZSign = (vecZ & 0b1000000000) >> 9;
-    vecZ = vecZ & 0b111111111;
-
-    float normalVectorIn[3];
-    // Should get us a number from -1 to 1
-    normalVectorIn[0] = (float)vecX / 511.0f;
-    if(vecXSign) {
-        normalVectorIn[0] = normalVectorIn[0] * -1.0f;
-    }
-    normalVectorIn[1] = (float)vecY / 511.0f;
-    if(vecYSign) {
-        normalVectorIn[1] = normalVectorIn[1] * -1.0f;
-    }
-    normalVectorIn[2] = (float)vecZ / 511.0f;
-    if(vecZSign) {
-        normalVectorIn[2] = normalVectorIn[2] * -1.0f;
-    }
+    const float normalVectorIn[3] = {DecodeVectorComponent(data, 0),
+                                     DecodeVectorComponent(data, 10),
+                                     DecodeVectorComponent(data, 20)};
 
     //Multiply by the vector matrix
     float normalVector[3];
@@ -1358,19 +1332,7 @@ void G3SIM_Normal(u32 data)
         {
             // Light is enabled
 
-            //Multiply light vector by vector matrix
-            float lightVector[3];
-            lightVector[0] = (s_G3LightVector[lightNum][0] * FX_FX32_TO_F32(currentVectorMatrix.nums[0][0]))
-                           + (s_G3LightVector[lightNum][1] * FX_FX32_TO_F32(currentVectorMatrix.nums[1][0]))
-                           + (s_G3LightVector[lightNum][2] * FX_FX32_TO_F32(currentVectorMatrix.nums[2][0]));
-
-            lightVector[1] = (s_G3LightVector[lightNum][0] * FX_FX32_TO_F32(currentVectorMatrix.nums[0][1]))
-                           + (s_G3LightVector[lightNum][1] * FX_FX32_TO_F32(currentVectorMatrix.nums[1][1]))
-                           + (s_G3LightVector[lightNum][2] * FX_FX32_TO_F32(currentVectorMatrix.nums[2][1]));
-
-            lightVector[2] = (s_G3LightVector[lightNum][0] * FX_FX32_TO_F32(currentVectorMatrix.nums[0][2]))
-                           + (s_G3LightVector[lightNum][1] * FX_FX32_TO_F32(currentVectorMatrix.nums[1][2]))
-                           + (s_G3LightVector[lightNum][2] * FX_FX32_TO_F32(currentVectorMatrix.nums[2][2]));
+            const float *lightVector = s_G3LightVector[lightNum];
 
             //Calculate Diffuse level
             float diffuseLevel = (lightVector[0] * normalVector[0])

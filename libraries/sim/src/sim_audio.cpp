@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <algorithm>
+#include <cstdlib>
 #include <type_traits>
 #include <SoundTouch.h>
 #include <nitro/snd/common/main.h>
@@ -231,6 +232,10 @@ void SIM_Audio_Init(int aAudioFrequency)
     s_requestedAudioSpec.callback = SIM_Audio_Callback;
     if(SDL_OpenAudio(&s_requestedAudioSpec, NULL) < 0) {
         printf("SDL Error %s\n", SDL_GetError());
+    } else {
+        // Stop and join the callback before C++ static destruction. Otherwise
+        // it can read s_effectTempo after SoundTouch has freed its FIFOs.
+        std::atexit([] { SDL_CloseAudio(); });
     }
     SDL_PauseAudio(0);
 }
