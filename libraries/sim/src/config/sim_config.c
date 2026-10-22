@@ -377,7 +377,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->vsyncInterval = 1;
     aConfig->capFrameRate = TRUE;
     aConfig->masterVolume = 50;
-    aConfig->fastForwardMultiplier = 5.0f;
+    aConfig->fastForwardMultiplier = 1.0f;
 
     aConfig->padSettings.joyAxisDeadzone = 32767 / 4;
     aConfig->padSettings.aKey = SDLK_z;

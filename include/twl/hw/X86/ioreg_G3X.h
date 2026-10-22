@@ -12,96 +12,98 @@ extern "C" {
 
 extern REGType16v s_reg_G3X_DISP3DCNT;
 extern REGType16v s_reg_G3X_RDLINES_COUNT;
-extern REGType32v s_reg_G3X_EDGE_COLOR_0;
-extern REGType16v s_reg_G3X_EDGE_COLOR_0_L;
-extern REGType16v s_reg_G3X_EDGE_COLOR_0_H;
-extern REGType32v s_reg_G3X_EDGE_COLOR_1;
-extern REGType16v s_reg_G3X_EDGE_COLOR_1_L;
-extern REGType16v s_reg_G3X_EDGE_COLOR_1_H;
-extern REGType32v s_reg_G3X_EDGE_COLOR_2;
-extern REGType16v s_reg_G3X_EDGE_COLOR_2_L;
-extern REGType16v s_reg_G3X_EDGE_COLOR_2_H;
-extern REGType32v s_reg_G3X_EDGE_COLOR_3;
-extern REGType16v s_reg_G3X_EDGE_COLOR_3_L;
-extern REGType16v s_reg_G3X_EDGE_COLOR_3_H;
+extern REGType32v s_reg_G3X_edgeTable[4];
+#define s_reg_G3X_EDGE_COLOR_0 s_reg_G3X_edgeTable[0]
+#define s_reg_G3X_EDGE_COLOR_0_L (((REGType16v *)&s_reg_G3X_edgeTable[0])[0])
+#define s_reg_G3X_EDGE_COLOR_0_H (((REGType16v *)&s_reg_G3X_edgeTable[0])[1])
+#define s_reg_G3X_EDGE_COLOR_1 s_reg_G3X_edgeTable[1]
+#define s_reg_G3X_EDGE_COLOR_1_L (((REGType16v *)&s_reg_G3X_edgeTable[1])[0])
+#define s_reg_G3X_EDGE_COLOR_1_H (((REGType16v *)&s_reg_G3X_edgeTable[1])[1])
+#define s_reg_G3X_EDGE_COLOR_2 s_reg_G3X_edgeTable[2]
+#define s_reg_G3X_EDGE_COLOR_2_L (((REGType16v *)&s_reg_G3X_edgeTable[2])[0])
+#define s_reg_G3X_EDGE_COLOR_2_H (((REGType16v *)&s_reg_G3X_edgeTable[2])[1])
+#define s_reg_G3X_EDGE_COLOR_3 s_reg_G3X_edgeTable[3]
+#define s_reg_G3X_EDGE_COLOR_3_L (((REGType16v *)&s_reg_G3X_edgeTable[3])[0])
+#define s_reg_G3X_EDGE_COLOR_3_H (((REGType16v *)&s_reg_G3X_edgeTable[3])[1])
 extern REGType16v s_reg_G3X_ALPHA_TEST_REF;
 extern REGType32v s_reg_G3X_CLEAR_COLOR;
 extern REGType16v s_reg_G3X_CLEAR_DEPTH;
 extern REGType16v s_reg_G3X_CLRIMAGE_OFFSET;
 extern REGType32v s_reg_G3X_FOG_COLOR;
 extern REGType16v s_reg_G3X_FOG_OFFSET;
-extern REGType32v s_reg_G3X_FOG_TABLE_0;
-extern REGType16v s_reg_G3X_FOG_TABLE_0_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_0_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_1;
-extern REGType16v s_reg_G3X_FOG_TABLE_1_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_1_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_2;
-extern REGType16v s_reg_G3X_FOG_TABLE_2_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_2_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_3;
-extern REGType16v s_reg_G3X_FOG_TABLE_3_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_3_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_4;
-extern REGType16v s_reg_G3X_FOG_TABLE_4_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_4_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_5;
-extern REGType16v s_reg_G3X_FOG_TABLE_5_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_5_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_6;
-extern REGType16v s_reg_G3X_FOG_TABLE_6_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_6_H;
-extern REGType32v s_reg_G3X_FOG_TABLE_7;
-extern REGType16v s_reg_G3X_FOG_TABLE_7_L;
-extern REGType16v s_reg_G3X_FOG_TABLE_7_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_0;
-extern REGType16v s_reg_G3X_TOON_TABLE_0_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_0_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_1;
-extern REGType16v s_reg_G3X_TOON_TABLE_1_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_1_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_2;
-extern REGType16v s_reg_G3X_TOON_TABLE_2_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_2_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_3;
-extern REGType16v s_reg_G3X_TOON_TABLE_3_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_3_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_4;
-extern REGType16v s_reg_G3X_TOON_TABLE_4_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_4_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_5;
-extern REGType16v s_reg_G3X_TOON_TABLE_5_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_5_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_6;
-extern REGType16v s_reg_G3X_TOON_TABLE_6_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_6_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_7;
-extern REGType16v s_reg_G3X_TOON_TABLE_7_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_7_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_8;
-extern REGType16v s_reg_G3X_TOON_TABLE_8_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_8_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_9;
-extern REGType16v s_reg_G3X_TOON_TABLE_9_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_9_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_10;
-extern REGType16v s_reg_G3X_TOON_TABLE_10_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_10_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_11;
-extern REGType16v s_reg_G3X_TOON_TABLE_11_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_11_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_12;
-extern REGType16v s_reg_G3X_TOON_TABLE_12_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_12_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_13;
-extern REGType16v s_reg_G3X_TOON_TABLE_13_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_13_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_14;
-extern REGType16v s_reg_G3X_TOON_TABLE_14_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_14_H;
-extern REGType32v s_reg_G3X_TOON_TABLE_15;
-extern REGType16v s_reg_G3X_TOON_TABLE_15_L;
-extern REGType16v s_reg_G3X_TOON_TABLE_15_H;
+extern REGType32v s_reg_G3X_fogToonTables[24];
+#define s_reg_G3X_FOG_TABLE_0 s_reg_G3X_fogToonTables[0]
+#define s_reg_G3X_FOG_TABLE_0_L (((REGType16v *)&s_reg_G3X_fogToonTables[0])[0])
+#define s_reg_G3X_FOG_TABLE_0_H (((REGType16v *)&s_reg_G3X_fogToonTables[0])[1])
+#define s_reg_G3X_FOG_TABLE_1 s_reg_G3X_fogToonTables[1]
+#define s_reg_G3X_FOG_TABLE_1_L (((REGType16v *)&s_reg_G3X_fogToonTables[1])[0])
+#define s_reg_G3X_FOG_TABLE_1_H (((REGType16v *)&s_reg_G3X_fogToonTables[1])[1])
+#define s_reg_G3X_FOG_TABLE_2 s_reg_G3X_fogToonTables[2]
+#define s_reg_G3X_FOG_TABLE_2_L (((REGType16v *)&s_reg_G3X_fogToonTables[2])[0])
+#define s_reg_G3X_FOG_TABLE_2_H (((REGType16v *)&s_reg_G3X_fogToonTables[2])[1])
+#define s_reg_G3X_FOG_TABLE_3 s_reg_G3X_fogToonTables[3]
+#define s_reg_G3X_FOG_TABLE_3_L (((REGType16v *)&s_reg_G3X_fogToonTables[3])[0])
+#define s_reg_G3X_FOG_TABLE_3_H (((REGType16v *)&s_reg_G3X_fogToonTables[3])[1])
+#define s_reg_G3X_FOG_TABLE_4 s_reg_G3X_fogToonTables[4]
+#define s_reg_G3X_FOG_TABLE_4_L (((REGType16v *)&s_reg_G3X_fogToonTables[4])[0])
+#define s_reg_G3X_FOG_TABLE_4_H (((REGType16v *)&s_reg_G3X_fogToonTables[4])[1])
+#define s_reg_G3X_FOG_TABLE_5 s_reg_G3X_fogToonTables[5]
+#define s_reg_G3X_FOG_TABLE_5_L (((REGType16v *)&s_reg_G3X_fogToonTables[5])[0])
+#define s_reg_G3X_FOG_TABLE_5_H (((REGType16v *)&s_reg_G3X_fogToonTables[5])[1])
+#define s_reg_G3X_FOG_TABLE_6 s_reg_G3X_fogToonTables[6]
+#define s_reg_G3X_FOG_TABLE_6_L (((REGType16v *)&s_reg_G3X_fogToonTables[6])[0])
+#define s_reg_G3X_FOG_TABLE_6_H (((REGType16v *)&s_reg_G3X_fogToonTables[6])[1])
+#define s_reg_G3X_FOG_TABLE_7 s_reg_G3X_fogToonTables[7]
+#define s_reg_G3X_FOG_TABLE_7_L (((REGType16v *)&s_reg_G3X_fogToonTables[7])[0])
+#define s_reg_G3X_FOG_TABLE_7_H (((REGType16v *)&s_reg_G3X_fogToonTables[7])[1])
+#define s_reg_G3X_TOON_TABLE_0 s_reg_G3X_fogToonTables[8]
+#define s_reg_G3X_TOON_TABLE_0_L (((REGType16v *)&s_reg_G3X_fogToonTables[8])[0])
+#define s_reg_G3X_TOON_TABLE_0_H (((REGType16v *)&s_reg_G3X_fogToonTables[8])[1])
+#define s_reg_G3X_TOON_TABLE_1 s_reg_G3X_fogToonTables[9]
+#define s_reg_G3X_TOON_TABLE_1_L (((REGType16v *)&s_reg_G3X_fogToonTables[9])[0])
+#define s_reg_G3X_TOON_TABLE_1_H (((REGType16v *)&s_reg_G3X_fogToonTables[9])[1])
+#define s_reg_G3X_TOON_TABLE_2 s_reg_G3X_fogToonTables[10]
+#define s_reg_G3X_TOON_TABLE_2_L (((REGType16v *)&s_reg_G3X_fogToonTables[10])[0])
+#define s_reg_G3X_TOON_TABLE_2_H (((REGType16v *)&s_reg_G3X_fogToonTables[10])[1])
+#define s_reg_G3X_TOON_TABLE_3 s_reg_G3X_fogToonTables[11]
+#define s_reg_G3X_TOON_TABLE_3_L (((REGType16v *)&s_reg_G3X_fogToonTables[11])[0])
+#define s_reg_G3X_TOON_TABLE_3_H (((REGType16v *)&s_reg_G3X_fogToonTables[11])[1])
+#define s_reg_G3X_TOON_TABLE_4 s_reg_G3X_fogToonTables[12]
+#define s_reg_G3X_TOON_TABLE_4_L (((REGType16v *)&s_reg_G3X_fogToonTables[12])[0])
+#define s_reg_G3X_TOON_TABLE_4_H (((REGType16v *)&s_reg_G3X_fogToonTables[12])[1])
+#define s_reg_G3X_TOON_TABLE_5 s_reg_G3X_fogToonTables[13]
+#define s_reg_G3X_TOON_TABLE_5_L (((REGType16v *)&s_reg_G3X_fogToonTables[13])[0])
+#define s_reg_G3X_TOON_TABLE_5_H (((REGType16v *)&s_reg_G3X_fogToonTables[13])[1])
+#define s_reg_G3X_TOON_TABLE_6 s_reg_G3X_fogToonTables[14]
+#define s_reg_G3X_TOON_TABLE_6_L (((REGType16v *)&s_reg_G3X_fogToonTables[14])[0])
+#define s_reg_G3X_TOON_TABLE_6_H (((REGType16v *)&s_reg_G3X_fogToonTables[14])[1])
+#define s_reg_G3X_TOON_TABLE_7 s_reg_G3X_fogToonTables[15]
+#define s_reg_G3X_TOON_TABLE_7_L (((REGType16v *)&s_reg_G3X_fogToonTables[15])[0])
+#define s_reg_G3X_TOON_TABLE_7_H (((REGType16v *)&s_reg_G3X_fogToonTables[15])[1])
+#define s_reg_G3X_TOON_TABLE_8 s_reg_G3X_fogToonTables[16]
+#define s_reg_G3X_TOON_TABLE_8_L (((REGType16v *)&s_reg_G3X_fogToonTables[16])[0])
+#define s_reg_G3X_TOON_TABLE_8_H (((REGType16v *)&s_reg_G3X_fogToonTables[16])[1])
+#define s_reg_G3X_TOON_TABLE_9 s_reg_G3X_fogToonTables[17]
+#define s_reg_G3X_TOON_TABLE_9_L (((REGType16v *)&s_reg_G3X_fogToonTables[17])[0])
+#define s_reg_G3X_TOON_TABLE_9_H (((REGType16v *)&s_reg_G3X_fogToonTables[17])[1])
+#define s_reg_G3X_TOON_TABLE_10 s_reg_G3X_fogToonTables[18]
+#define s_reg_G3X_TOON_TABLE_10_L (((REGType16v *)&s_reg_G3X_fogToonTables[18])[0])
+#define s_reg_G3X_TOON_TABLE_10_H (((REGType16v *)&s_reg_G3X_fogToonTables[18])[1])
+#define s_reg_G3X_TOON_TABLE_11 s_reg_G3X_fogToonTables[19]
+#define s_reg_G3X_TOON_TABLE_11_L (((REGType16v *)&s_reg_G3X_fogToonTables[19])[0])
+#define s_reg_G3X_TOON_TABLE_11_H (((REGType16v *)&s_reg_G3X_fogToonTables[19])[1])
+#define s_reg_G3X_TOON_TABLE_12 s_reg_G3X_fogToonTables[20]
+#define s_reg_G3X_TOON_TABLE_12_L (((REGType16v *)&s_reg_G3X_fogToonTables[20])[0])
+#define s_reg_G3X_TOON_TABLE_12_H (((REGType16v *)&s_reg_G3X_fogToonTables[20])[1])
+#define s_reg_G3X_TOON_TABLE_13 s_reg_G3X_fogToonTables[21]
+#define s_reg_G3X_TOON_TABLE_13_L (((REGType16v *)&s_reg_G3X_fogToonTables[21])[0])
+#define s_reg_G3X_TOON_TABLE_13_H (((REGType16v *)&s_reg_G3X_fogToonTables[21])[1])
+#define s_reg_G3X_TOON_TABLE_14 s_reg_G3X_fogToonTables[22]
+#define s_reg_G3X_TOON_TABLE_14_L (((REGType16v *)&s_reg_G3X_fogToonTables[22])[0])
+#define s_reg_G3X_TOON_TABLE_14_H (((REGType16v *)&s_reg_G3X_fogToonTables[22])[1])
+#define s_reg_G3X_TOON_TABLE_15 s_reg_G3X_fogToonTables[23]
+#define s_reg_G3X_TOON_TABLE_15_L (((REGType16v *)&s_reg_G3X_fogToonTables[23])[0])
+#define s_reg_G3X_TOON_TABLE_15_H (((REGType16v *)&s_reg_G3X_fogToonTables[23])[1])
 extern REGType32v s_reg_G3X_GXFIFO;
 extern REGType32v s_reg_G3X_GXSTAT;
 extern REGType16v s_reg_G3X_LISTRAM_COUNT;
