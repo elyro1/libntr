@@ -238,6 +238,9 @@ meson.override_dependency('NitroSDK', nitrosdk_dep)
 
 # Higher-level graphics, resource management, and audio share the SDK release.
 subdir('system')
+subdir('wifi')
+subdir('dwc')
+subdir('vct')
 
 if(get_option('standalone') == true)
     subdir('standalone')

@@ -1,12 +1,10 @@
 # libntr
 ![logo](images/libntr.png)
-Drop-in replacement for NitroSDK and NitroSystem that targets Nintendo DS/DSi, PC, and other platforms.
+Drop-in replacements for NitroSDK, NitroSystem, NitroWiFi, NitroDWC, and VCT
+that target Nintendo DS/DSi, PC, and other platforms.
 
 libntr makes it easier to port Nintendo DS/DSi games to PC and other platforms by handling the logic for common libraries used by nearly all Nintendo DS games.
 
-See also: 
- * [libntrwifi](https://github.com/cybervisi0n/libntrwifi)
- * [libntrdwc](https://github.com/cybervisi0n/libntrdwc)
 
 ## Features
  * Fully compatible with NitroSDK
@@ -74,3 +72,37 @@ the core SDK's compiler and SDK library versions on NitroSystem targets.
 For example, a consumer can select `mwrap_sdk=2.0/sp1p2` for NitroSDK and
 `nitrosystem_mwrap_sdk=2.0/sp2` for NitroSystem independently.
 Meson 1.12 or later is required, matching pokeplatinum's bundled build tool.
+
+## Integrated networking and voice
+
+`wifi/`, `dwc/`, and `vct/` contain the former libntrwifi, libntrdwc, and
+libvct projects. They build after `system/` and provide the existing
+`NitroWiFi`, `NitroDWC`, and `libvct` Meson dependencies. Public headers,
+library target names, and DS prebuilt archives are preserved. Consumers
+should list all five dependency names in their libntr wrap's `[provide]`
+section and remove the separate WiFi, DWC, and VCT wraps.
+
+Imported sources are pinned here for future upstream comparisons:
+
+| Module | Upstream repository | Imported commit |
+| --- | --- | --- |
+| WiFi | cybervisi0n/libntrwifi | `067dabb137dfaf80b8ceeb3b3c4a7256bfabc3e0` |
+| DWC | cybervisi0n/libntrdwc | `16246ba7b4269e6686f3e4da068e3c996a103739` |
+| VCT | cybervisi0n/libvct | `a34ad47fc0d7d964483c287759b704b3b1f3b967` |
+
+Only build integration and whitespace were changed during import.
+WiFi and DWC retain their original documentation as `README.upstream.md`;
+build these modules through the root SDK project.
+
+`nitrowifi_mwrap_ver` / `nitrowifi_mwrap_sdk` and
+`nitrodwc_mwrap_ver` / `nitrodwc_mwrap_sdk` select their respective DS
+compiler and SDK library versions. `nitrowifi_sp1p3_conditionals` controls
+WiFi's legacy conditional-assembly behavior independently of the core SDK.
+`nitrodwc_link_ppwlobby` enables Pokemon lobby hooks supplied by the game;
+it defaults to false and must be enabled by consumers that supply those hooks.
+
+When migrating an existing checkout, move or remove the unused downloaded
+`subprojects/libvct` directory before configuring. Meson otherwise treats
+that directory as another provider of the `libvct` dependency. Existing
+build directories also need the renamed module options set with
+`meson configure`; fresh builds receive the consuming project's defaults.
