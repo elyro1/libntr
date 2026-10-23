@@ -1,6 +1,7 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 
 #include "common.h"
 
@@ -35,6 +36,69 @@ static constexpr auto Separator =
 constexpr unsigned oneGB = 1073741824U;
 
 typedef std::vector<unsigned char> NitroROM;
+
+// Automatic discovery can encounter truncated or unrelated files. Validate the
+// tables and paths before the legacy extractor reads offsets or writes files.
+static bool ValidRom(const NitroROM &rom) {
+    if (rom.size() < 0x4000) return false;
+    auto word = [&](size_t pos, unsigned count = 4) {
+        unsigned value = 0;
+        for (unsigned i = 0; i < count; ++i) value |= unsigned(rom[pos + i]) << (8 * i);
+        return value;
+    };
+    auto range = [&](unsigned start, unsigned size) {
+        return start <= rom.size() && size <= rom.size() - start;
+    };
+    for (auto offset : {0x20, 0x30, 0x40, 0x48, 0x50, 0x58}) {
+        unsigned size = word(offset + (offset < 0x40 ? 12 : 4));
+        if (!range(word(offset), size)) return false;
+    }
+    unsigned fnt = word(0x40), fntSize = word(0x44);
+    unsigned fat = word(0x48), fatSize = word(0x4c);
+    if (fntSize < 8 || fatSize % 8 || word(0x54) % 32 || word(0x5c) % 32) return false;
+    for (unsigned pos = 0; pos < fatSize; pos += 8) {
+        unsigned start = word(fat + pos), end = word(fat + pos + 4);
+        if (end < start || !range(start, end - start)) return false;
+    }
+    for (auto offset : {0x50, 0x58}) {
+        for (unsigned pos = 0; pos < word(offset + 4); pos += 32)
+            if (word(word(offset) + pos + 24, 2) >= fatSize / 8) return false;
+    }
+    unsigned icon = word(0x68);
+    if (icon) {
+        if (!range(icon, 2)) return false;
+        unsigned version = word(icon, 2);
+        unsigned size = version == 0x103 ? 0x23c0 : version == 3 ? 0xa40 : version == 2 ? 0x940 : 0x840;
+        if (!range(icon, size)) return false;
+    }
+    if (!range(word(0x80), 136)) return false;
+    unsigned count = word(fnt + 6, 2);
+    if (!count || count > 4096 || count * 8 > fntSize) return false;
+    std::vector<bool> seen(count);
+    std::function<bool(unsigned, unsigned)> directory = [&](unsigned id, unsigned depth) {
+        if (id < 0xf000 || id - 0xf000 >= count || depth > 128) return false;
+        unsigned index = id - 0xf000;
+        if (seen[index]) return false;
+        seen[index] = true;
+        unsigned pos = word(fnt + index * 8), file = word(fnt + index * 8 + 4, 2);
+        while (pos < fntSize) {
+            unsigned entry = rom[fnt + pos++], len = entry & 0x7f;
+            if (!entry) return true;
+            unsigned size = len + (entry & 0x80 ? 2 : 0);
+            if (!len || size > fntSize - pos) return false;
+            std::string name(reinterpret_cast<const char *>(&rom[fnt + pos]), len);
+            if (name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos
+                || name.find('\0') != std::string::npos) return false;
+            pos += len;
+            if (entry & 0x80) {
+                if (!directory(word(fnt + pos, 2), depth + 1)) return false;
+                pos += 2;
+            } else if (file++ >= fatSize / 8) return false;
+        }
+        return false;
+    };
+    return directory(0xf000, 0);
+}
 
 
 
@@ -177,12 +241,12 @@ int SIM_NDSExtract(std::string ndsFilePath){
 	fs::path ov9Path = fsOutputPath.string() + Separator +"overlay9";
 	fs::path ov7Path = fsOutputPath.string() + Separator + "overlay7";
 	fs::path dataPath = fsOutputPath.string() + Separator;
-	unsigned ndsFileSize = fs::file_size(ndsInputPath);
 
 	if (!fs::exists(ndsInputPath) || !fs::is_regular_file(ndsInputPath)) {
 		std::cout << DERROR << "NDS input file " << ndsInputPath.string() << " is not a valid file" << std::endl;
 		return -1;
 	}
+	uintmax_t ndsFileSize = fs::file_size(ndsInputPath);
 
 	if (ndsFileSize > oneGB) {
 		std::cout << DERROR << "NDS input file " << ndsInputPath.string() << " is larger than 1GB" << std::endl;
@@ -211,6 +275,10 @@ int SIM_NDSExtract(std::string ndsFilePath){
 	std::cout << DINFO << "Reading NDS file " << ndsInputPath.string() << std::endl;
 
 	ndsFile.read(reinterpret_cast<char*>(rom.data()), ndsFileSize);
+	if (!ndsFile || !ValidRom(rom)) {
+		std::cout << DERROR << "Invalid or truncated NDS ROM" << std::endl;
+		return -1;
+	}
 	ndsFile.close();
 
 	unsigned* urom = reinterpret_cast<unsigned*>(rom.data());
