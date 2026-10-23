@@ -3,7 +3,7 @@ project('libntr', 'c', 'cpp', 'nasm',
         'default_library': 'static',
         'prefer_static':    false
     },
-    meson_version: '>=1.3.0',
+    meson_version: '>=1.12.0',
     version: '4.2.30001',
 )
 
@@ -235,6 +235,9 @@ nitrosdk_dep = declare_dependency(
 )
 
 meson.override_dependency('NitroSDK', nitrosdk_dep)
+
+# Higher-level graphics, resource management, and audio share the SDK release.
+subdir('system')
 
 if(get_option('standalone') == true)
     subdir('standalone')

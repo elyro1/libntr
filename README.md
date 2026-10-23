@@ -1,11 +1,10 @@
 # libntr
 ![logo](images/libntr.png)
-Drop-in replacement for NitroSDK that targets Nintendo DS/DSi, PC, and other platforms.
+Drop-in replacement for NitroSDK and NitroSystem that targets Nintendo DS/DSi, PC, and other platforms.
 
 libntr makes it easier to port Nintendo DS/DSi games to PC and other platforms by handling the logic for common libraries used by nearly all Nintendo DS games.
 
 See also: 
- * [libntrsystem](https://github.com/cybervisi0n/libntrsystem)
  * [libntrwifi](https://github.com/cybervisi0n/libntrwifi)
  * [libntrdwc](https://github.com/cybervisi0n/libntrdwc)
 
@@ -55,3 +54,23 @@ target rate; reaching it depends on rendering and audio workload.
 Simulator builds require SoundTouch 2.3 or later (`soundtouch` via pkg-config).
 For Windows, include the SoundTouch DLL alongside the executable. DS builds do
 not use this dependency.
+
+## Integrated NitroSystem
+
+`system/` contains NitroSystem's foundation, 2D/3D graphics, VRAM management,
+MCS, and sound libraries. Meson provides both `NitroSDK` and `NitroSystem`
+from this project; consumers do not need a separate libntrsystem checkout.
+The existing `<nnsys.h>` and `<nnsys/...>` include paths remain available
+through the `NitroSystem` dependency.
+
+The sources were imported from cybervisi0n/libntrsystem at
+`9c2309a2c995c919a67093858677f0f43459d7fc`, with pokeplatinum's
+fast-forward players, extended field textures, simulator feature detection,
+and BW battle multi-cell bank patches applied. The simulator feature probes
+are replaced by explicit feature definitions for the integrated SDK.
+
+For DS builds, `nitrosystem_mwrap_ver` and `nitrosystem_mwrap_sdk` override
+the core SDK's compiler and SDK library versions on NitroSystem targets.
+For example, a consumer can select `mwrap_sdk=2.0/sp1p2` for NitroSDK and
+`nitrosystem_mwrap_sdk=2.0/sp2` for NitroSystem independently.
+Meson 1.12 or later is required, matching pokeplatinum's bundled build tool.

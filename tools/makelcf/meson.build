@@ -33,4 +33,4 @@ makelcf_exe = executable('makelcf',
     native: true
 )
 
-meson.override_find_program('makelcf', makelcf_exe)
+meson.override_find_program('makelcf', makelcf_exe, native: true)

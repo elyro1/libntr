@@ -8,3 +8,5 @@ option('sdk_version_major', type: 'integer', value: 4, description: 'Major versi
 option('hardware_type', type: 'combo', choices: ['ntr', 'twl_hyb', 'twl_ltd'], description: 'Hardware device type. ntr=DS, twl_hyb=DSi/DS combined build, twl_ltd=DSi only. On SDK major versions below 5, ntr is the only supported device type.', yield: true)
 option('card_game_code', type: 'string', value: '', description: 'Game Code. Must be exactly four letters.')
 option('card_maker_code', type: 'string', value: '', description: 'Maker Code. Must be exactly two characters. Typically 01.')
+option('nitrosystem_mwrap_ver', type: 'string', value: 'default', description: 'Metrowerks toolchain version override for NitroSystem')
+option('nitrosystem_mwrap_sdk', type: 'string', value: 'default', description: 'Metrowerks SDK library version override for NitroSystem')
