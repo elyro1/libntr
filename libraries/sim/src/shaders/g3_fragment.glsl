@@ -394,7 +394,11 @@ void main()
             if (along < -6.0 || along > len) continue;
             float u = clamp(along / len, 0.0, 1.0);
             float row = floor(along / 2.0);
-            uint rh = HashCell(ivec2(int(row), int(tick)) + ivec2(i * 131, 17));
+            // Upload slots follow camera distance and can change on stairs.
+            // Anchor the pattern to the light instead; rounding also absorbs
+            // small errors from reconstructing its world position from clip.
+            uint lightSeed = HashCell(ivec2(floor(spot + 0.5)));
+            uint rh = HashCell(ivec2(int(row), int(tick)) + ivec2(int(lightSeed & 65535u), int(lightSeed >> 16)));
             float shift = (float(rh & 15u) / 15.0 - 0.5) * 3.0 * (0.5 + u);
             float dash = width * (0.8 + 0.5 * float((rh >> 4) & 7u) / 7.0) * mix(1.0, 0.55, u);
             float across = abs(dot(d, vec2(-down.y, down.x)) + shift);

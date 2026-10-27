@@ -172,14 +172,22 @@ static void UploadReflections()
     int count = 0;
     for (int n = 0; n < (int)order.size() && count < MAX_UPLOAD; n++) {
         const FieldEmitter &e = sEmitters[order[n].second];
-        float best = 12 * 12, spot[2] = { }, waterY = 0;
+        // Clip-to-world reconstruction has subpixel rounding noise as the
+        // camera climbs stairs. Do not let a lamp exactly 12 units from the
+        // bank fall in and out of range, or swap overlapping water planes.
+        const float epsilon = 1.0f / 256;
+        float best = 12, spot[2] = { }, waterY = 0;
         bool found = false;
         for (const FieldWater &w : sWater) {
             if (e.position[1] - w.y < 1) continue;
             float ex = std::min(std::max(e.position[0], w.min[0]), w.max[0]);
             float ez = std::min(std::max(e.position[2], w.min[1]), w.max[1]);
-            float d = (ex - e.position[0]) * (ex - e.position[0]) + (ez - e.position[2]) * (ez - e.position[2]);
-            if (d > best || (found && d == best)) continue;
+            float d = std::sqrt((ex - e.position[0]) * (ex - e.position[0]) + (ez - e.position[2]) * (ez - e.position[2]));
+            if (d > 12 + epsilon || (found && d > best + epsilon)) continue;
+            // At equal horizontal distance, use the upper water surface.
+            // The Battle Tower has two overlapping bf_lake planes; their
+            // tiny reconstruction errors must not decide which one wins.
+            if (found && std::fabs(d - best) <= epsilon && w.y <= waterY + epsilon) continue;
             float inset[2] = { std::min(9.0f, (w.max[0] - w.min[0]) / 2), std::min(9.0f, (w.max[1] - w.min[1]) / 2) };
             spot[0] = e.position[0] < w.min[0] ? w.min[0] + inset[0] : e.position[0] > w.max[0] ? w.max[0] - inset[0] : e.position[0];
             spot[1] = e.position[2] < w.min[1] ? w.min[1] + inset[1] : e.position[2] > w.max[1] ? w.max[1] - inset[1] : e.position[2];
