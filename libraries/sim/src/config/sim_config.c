@@ -31,6 +31,19 @@ static int IniHandler(void* user, const char* section, const char* name,
 
     SIM_config_type * config = (SIM_config_type *)user;
 
+    if(MATCH("Interface", "MenuScalePercent")) {
+        char *end;
+        errno = 0;
+        long scale = strtol(value, &end, 10);
+        BOOL parsed = end != value;
+        while (isspace((unsigned char)*end)) ++end;
+        config->menuScalePercent = (!parsed || *end || errno || scale < 100 || scale > 200 || scale % 25)
+            ? 0 : (int)scale;
+    }
+    if(MATCH("Interface", "PauseWhileOpen")) {
+        config->pauseWhileMenuOpen = StringToBool(value);
+    }
+
     // General section
     if(MATCH("General", "InternalResolutionScale")) {
         int scale = atoi(value);
@@ -399,6 +412,8 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->capFrameRate = TRUE;
     aConfig->masterVolume = 50;
     aConfig->fastForwardMultiplier = 5.0f;
+    aConfig->menuScalePercent = 0;
+    aConfig->pauseWhileMenuOpen = TRUE;
 
     aConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
     aConfig->padSettings.upJoyKeySecondary = SIM_CONFIG_JOY_AXIS_MINUS_MASK | 1;
@@ -470,6 +485,11 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
 void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
 {
     FILE * configFile = fopen(SIM_CONFIG_FILE_PATH, "w");
+    if (!configFile) return;
+
+    fprintf(configFile, "[Interface]\n");
+    fprintf(configFile, "MenuScalePercent=%d\n", aConfig->menuScalePercent);
+    fprintf(configFile, "PauseWhileOpen=%s\n\n", BoolToString(aConfig->pauseWhileMenuOpen));
     
     fprintf(configFile, "[General]\n");
     fprintf(configFile, "InternalResolutionScale=%d\n", aConfig->internalResolutionScale);

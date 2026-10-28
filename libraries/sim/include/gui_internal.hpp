@@ -2,13 +2,15 @@
 #define LIBNTR_SIM_GUI_INTERNAL_HPP
 
 namespace SIM::GUI {
-void AppConfigInit();
-void AppConfigMain(bool * openState);
+void DisplayContents();
+void AudioContents();
+void SpeedContents();
 void AppNetInit();
-void AppNetMain(bool * openState);
+void AppNetContents();
 bool AppPadProcessEvent(SDL_Event *event, bool active);
 void AppPadInit();
-void AppPadMain(bool * openState);
+void AppPadContents();
+bool AppPadIsCapturing();
 
 }
 

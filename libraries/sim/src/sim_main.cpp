@@ -178,6 +178,7 @@ static void UpdateFastForward(SDL_Window *gameWindow) {
   const Uint8 *keys = SDL_GetKeyboardState(nullptr);
   const SDL_Scancode fastForwardKey = SDL_GetScancodeFromKey(s_SIM_config.padSettings.fastForwardKey);
   sFastForwardActive = SDL_GetKeyboardFocus() == gameWindow &&
+                       !SIM::GUI::IsEnabled() &&
                        !ImGui::GetIO().WantCaptureKeyboard &&
                        !SIM::GUI::IsGameLogicPaused() &&
                        fastForwardKey != SDL_SCANCODE_UNKNOWN &&
@@ -637,8 +638,11 @@ static void ApplyPending3DAntialiasing(bool resolutionChanged) {
 
 void *SIM_RenderInit(void *arg) {
 
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS
+  SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+#endif
   SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER |
-           SDL_INIT_JOYSTICK);
+           SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
   SIM_Audio_Init(44100);
 
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
@@ -709,7 +713,7 @@ void *SIM_RenderInit(void *arg) {
 
   window = SDL_CreateWindow(
       windowTitle.c_str(), 100, 100, windowWidth, windowHeight,
-      SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+      SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
   context = SDL_GL_CreateContext(window);
 
   if(s_SIM_config.fullScreen) {
@@ -1402,6 +1406,17 @@ static void DrawEngine(BOOL isSub) {
 
 static unsigned s_KeyboardDirections = 0;
 static bool s_DirectionalInputFocused = true;
+static bool s_WaitForJoystickNeutral = false;
+
+static void ReleaseGameplayInput() {
+  s_KeyboardDirections = 0;
+  s_reg_PAD_KEYINPUT |= 0x3ff;
+  *(vu16 *)HW_BUTTON_XY_BUF |= 0xc00;
+  isMouseDown = 0;
+  s_tpData.touch = 0;
+  s_tpData.validity = 0;
+  s_WaitForJoystickNeutral = true;
+}
 
 static void HandleJoystickKeyDown(int aKey) {
   if (aKey == s_SIM_config.padSettings.aJoyKey) {
@@ -1689,12 +1704,14 @@ void *SIM_Render(void *arg) {
 
     SIM_Autopilot_Frame();
     while (SDL_PollEvent(&Event)) {
-      if (SIM::GUI::ProcessEvent(&Event)) continue;
+      const bool consumed = SIM::GUI::ProcessEvent(&Event);
+      if (SIM::GUI::ConsumeInputReset()) ReleaseGameplayInput();
+      if (consumed) continue;
 
       if (Event.type == SDL_WINDOWEVENT) {
         switch (Event.window.event) {
         case SDL_WINDOWEVENT_FOCUS_LOST:
-          s_KeyboardDirections = 0;
+          ReleaseGameplayInput();
           s_DirectionalInputFocused = false;
           break;
         case SDL_WINDOWEVENT_FOCUS_GAINED:
@@ -1709,7 +1726,7 @@ void *SIM_Render(void *arg) {
         int keyRead = Event.key.keysym.sym;
         if (keyRead == s_SIM_config.padSettings.fullScreenKey) {
           if (!Event.key.repeat && SDL_GetKeyboardFocus() == window &&
-              !ImGui::GetIO().WantCaptureKeyboard) {
+              (SIM::GUI::IsEnabled() || !ImGui::GetIO().WantCaptureKeyboard)) {
             const bool fullScreen = !s_SIM_config.fullScreen;
             if (SDL_SetWindowFullscreen(window, fullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) == 0) {
               s_SIM_config.fullScreen = fullScreen;
@@ -1758,9 +1775,6 @@ void *SIM_Render(void *arg) {
         } else if (keyRead == s_SIM_config.padSettings.selectKey) {
           // Select button
           s_reg_PAD_KEYINPUT = s_reg_PAD_KEYINPUT & 0b1111111111111011;
-        } else if (keyRead == s_SIM_config.padSettings.guiKey) {
-          // Toggle Debug GUI
-          SIM::GUI::Toggle();
         }
       }
       if (Event.type == SDL_KEYUP) {
@@ -1875,8 +1889,13 @@ void *SIM_Render(void *arg) {
     }
     // Polling keeps overlapping bindings, remapping, disconnects and live
     // deadzone changes independent of the order of SDL release events.
-    const unsigned joystickDirections = s_DirectionalInputFocused
+    unsigned joystickDirections = s_DirectionalInputFocused && !SIM::GUI::IsEnabled()
         ? SIM::Input::JoystickDirections(s_SIM_SDLJoystick, s_SIM_config.padSettings) : 0;
+    if (s_WaitForJoystickNeutral) {
+      if (!joystickDirections) s_WaitForJoystickNeutral = false;
+      joystickDirections = 0;
+    }
+    if (SIM::GUI::IsEnabled()) ReleaseGameplayInput();
     s_reg_PAD_KEYINPUT = SIM::Input::ApplyDirections(
         s_reg_PAD_KEYINPUT, s_KeyboardDirections, joystickDirections);
 
@@ -1896,6 +1915,7 @@ void *SIM_Render(void *arg) {
 
     SIM::GUI::NewFrame();
     SIM::GUI::Main();
+    if (SIM::GUI::ConsumeInputReset()) ReleaseGameplayInput();
     UpdateFastForward(window);
 
     memset(bgtex, 0,
@@ -1984,7 +2004,7 @@ void *SIM_Render(void *arg) {
     // high-refresh displays and on drivers that ignore the swap interval.
     if (paced && swapInterval == 0) WaitForFrameDeadline(deadline);
     const u64 profileSwapStart = SIM_ProfileNow();
-    SIM_Autopilot_BeforeSwap(windowWidth, windowHeight);
+    SIM_Autopilot_BeforeSwap(drawableWidth, drawableHeight);
     SDL_GL_SwapWindow(window);
     const u64 profileSwapEnd = SIM_ProfileNow();
     if (paced && swapInterval != 0) WaitForFrameDeadline(deadline);

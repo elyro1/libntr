@@ -1,219 +1,181 @@
 #include "simulator/sim.h"
 #include "simulator/sim_gui.hpp"
-
 #include "simulator/imgui/imgui.hpp"
-#include "simulator/config/sim_config.h"
-
 #include "gui_internal.hpp"
 
 #include <algorithm>
 #include <format>
 #include <string>
-#include <SDL2/SDL.h>
 
 namespace SIM::GUI {
+static SIM_config_type *sConfig;
+static int *sPendingKeyboardBinding;
+static int *sPendingJoystickBinding;
 
-static constexpr ImVec2 BtnSize = {50, 20};
+bool AppPadIsCapturing() { return sPendingKeyboardBinding || sPendingJoystickBinding; }
 
-static SIM_config_type * sConfig;
-static bool sConfigChanged = false;
-
-static void SetKeyConfig(int& config) {
-    SDL_Event Event;
-    while(true) {
-        while( SDL_PollEvent(&Event)) {
-            if(Event.type == SDL_KEYDOWN)
-            {
-                config = Event.key.keysym.sym;
-                return;
-            }
-        }
-    }
-}
-
-static int *sPendingJoystickBinding = nullptr;
-
-// Capture through the normal event loop so the window stays responsive and
-// keyboard release / focus / device removal events are never swallowed.
+// Binding capture shares the main event loop: no spinning, frozen rendering,
+// or swallowed focus/device/quit events.
 bool AppPadProcessEvent(SDL_Event *event, bool active) {
-    if (!active || (event->type == SDL_WINDOWEVENT &&
-                    event->window.event == SDL_WINDOWEVENT_FOCUS_LOST)) {
+    if (!active || (event && event->type == SDL_WINDOWEVENT &&
+                    event->window.event == SDL_WINDOWEVENT_FOCUS_LOST) ||
+        (event && event->type == SDL_JOYDEVICEREMOVED)) {
+        sPendingKeyboardBinding = nullptr;
         sPendingJoystickBinding = nullptr;
     }
-    if (!sPendingJoystickBinding) return false;
-    if (event->type == SDL_KEYDOWN && event->key.keysym.sym == SDLK_ESCAPE) {
-        sPendingJoystickBinding = nullptr;
+    if (!event || !AppPadIsCapturing()) return false;
+    if (event->type == SDL_KEYDOWN) {
+        if (event->key.repeat) return true;
+        if (event->key.keysym.sym == SDLK_ESCAPE) {
+            sPendingKeyboardBinding = nullptr;
+            sPendingJoystickBinding = nullptr;
+        } else if (sPendingKeyboardBinding) {
+            *sPendingKeyboardBinding = event->key.keysym.sym;
+            sPendingKeyboardBinding = nullptr;
+            SIM_Config_SaveConfigFile(sConfig);
+        }
         return true;
     }
+    if (!sPendingJoystickBinding) return false;
     int binding = SIM_CONFIG_JOY_INVALID_KEY;
     if (event->type == SDL_JOYBUTTONDOWN) {
         binding = event->jbutton.button;
     } else if (event->type == SDL_JOYHATMOTION && event->jhat.hat == 0) {
         const int value = event->jhat.value;
         if (value == SDL_HAT_UP || value == SDL_HAT_DOWN ||
-            value == SDL_HAT_LEFT || value == SDL_HAT_RIGHT) {
+            value == SDL_HAT_LEFT || value == SDL_HAT_RIGHT)
             binding = value | SIM_CONFIG_JOY_HAT_MASK;
-        }
     } else if (event->type == SDL_JOYAXISMOTION) {
-        // Capture requires a deliberate tilt even with a zero play deadzone.
         const int threshold = std::max(SIM_CONFIG_JOY_DEFAULT_DEADZONE,
                                       sConfig->padSettings.joyAxisDeadzone);
-        if (event->jaxis.value > threshold || event->jaxis.value < -threshold) {
+        if (event->jaxis.value > threshold || event->jaxis.value < -threshold)
             binding = event->jaxis.axis | (event->jaxis.value > 0
                 ? SIM_CONFIG_JOY_AXIS_PLUS_MASK : SIM_CONFIG_JOY_AXIS_MINUS_MASK);
-        }
     }
     if (binding == SIM_CONFIG_JOY_INVALID_KEY) return false;
     *sPendingJoystickBinding = binding;
     sPendingJoystickBinding = nullptr;
-    sConfigChanged = true;
+    SIM_Config_SaveConfigFile(sConfig);
     return true;
 }
 
-static std::string GetJoystickKeyName(int key) {
+static std::string JoystickName(int key) {
     if (key == SIM_CONFIG_JOY_INVALID_KEY) return "None";
-    std::string ret = "";
-    if(key & SIM_CONFIG_JOY_HAT_MASK) {
-        ret = std::format("Hat {}", key & ~(SIM_CONFIG_JOY_HAT_MASK));
-    } else if(key & SIM_CONFIG_JOY_AXIS_MINUS_MASK) {
-        ret = std::format("Axis {}-", key & ~(SIM_CONFIG_JOY_AXIS_MINUS_MASK));
-    } else if(key & SIM_CONFIG_JOY_AXIS_PLUS_MASK){
-        ret = std::format("Axis {}+", key & ~(SIM_CONFIG_JOY_AXIS_PLUS_MASK));
-    } else {
-        ret = std::format("{}", key);
-    }
-
-    return ret;
+    if (key & SIM_CONFIG_JOY_HAT_MASK)
+        return std::format("Hat {}", key & ~SIM_CONFIG_JOY_HAT_MASK);
+    if (key & SIM_CONFIG_JOY_AXIS_MINUS_MASK)
+        return std::format("Axis {}-", key & ~SIM_CONFIG_JOY_AXIS_MINUS_MASK);
+    if (key & SIM_CONFIG_JOY_AXIS_PLUS_MASK)
+        return std::format("Axis {}+", key & ~SIM_CONFIG_JOY_AXIS_PLUS_MASK);
+    return std::format("Button {}", key);
 }
 
-static void KeySettingButton(const char * keyName, int btnId, int& key) {
-    ImGui::Text(keyName);
-    ImGui::SameLine(0.0f, 1.0f);
-    ImGui::PushID(btnId);
-    if(ImGui::Button(SDL_GetKeyName(key), BtnSize)) {
-        SetKeyConfig(key);
-        sConfigChanged = true;
+static void KeyboardRow(const char *label, int &key) {
+    SettingsRow(label);
+    ImGui::PushID(&key);
+    if (ImGui::Button(sPendingKeyboardBinding == &key ? "Press a key..." : SDL_GetKeyName(key),
+                      ImVec2(-1, 0))) {
+        sPendingJoystickBinding = nullptr;
+        sPendingKeyboardBinding = &key;
     }
     ImGui::PopID();
 }
 
-static void JoystickBindingButton(int btnId, int& key, bool allowClear = false) {
-    ImGui::PushID(btnId);
-    auto buttonName = sPendingJoystickBinding == &key ? std::string("Press...") : GetJoystickKeyName(key);
-    if (ImGui::Button(buttonName.c_str(), ImVec2(80, 20))) {
+static void ControllerRow(const char *label, int &key, bool clear = false) {
+    SettingsRow(label);
+    ImGui::PushID(&key);
+    const std::string name = sPendingJoystickBinding == &key ? "Press a button..." : JoystickName(key);
+    const float clearWidth = ImGui::CalcTextSize("Clear").x + ImGui::GetStyle().FramePadding.x * 2;
+    const float width = clear ? std::max(ImGui::GetFontSize() * 3,
+        ImGui::GetContentRegionAvail().x - clearWidth - ImGui::GetStyle().ItemSpacing.x) : -1;
+    if (ImGui::Button(name.c_str(), ImVec2(width, 0))) {
+        sPendingKeyboardBinding = nullptr;
         sPendingJoystickBinding = &key;
     }
-    if (allowClear) {
+    if (clear) {
         ImGui::SameLine();
-        if (ImGui::SmallButton("Clear")) {
+        if (ImGui::Button("Clear")) {
             if (sPendingJoystickBinding == &key) sPendingJoystickBinding = nullptr;
             key = SIM_CONFIG_JOY_INVALID_KEY;
-            sConfigChanged = true;
+            SIM_Config_SaveConfigFile(sConfig);
         }
     }
     ImGui::PopID();
 }
 
-static void JoystickKeySettingButton(const char * keyName, int btnId, int& key) {
-    ImGui::TextUnformatted(keyName);
-    ImGui::SameLine(0.0f, 1.0f);
-    JoystickBindingButton(btnId, key);
+void AppPadInit() { sConfig = SIM_GetConfigPtr(); }
+
+void AppPadContents() {
+    static int activeDevice = 0;
+    ImGui::TextWrapped("Select a binding, then press a key or controller input. Escape cancels.");
+    if (AppPadIsCapturing())
+        ImGui::TextWrapped("Waiting for input... Escape cancels without changing the binding.");
+    if (!ImGui::BeginTabBar("InputDevice")) return;
+    if (ImGui::BeginTabItem("Keyboard")) {
+        if (activeDevice != 0) AppPadProcessEvent(nullptr, false);
+        activeDevice = 0;
+        if (BeginSettings("KeyboardBindings")) {
+            KeyboardRow("A - Confirm / interact", sConfig->padSettings.aKey);
+            KeyboardRow("B - Cancel / run", sConfig->padSettings.bKey);
+            KeyboardRow("X - In-game menu", sConfig->padSettings.xKey);
+            KeyboardRow("Y - Registered item", sConfig->padSettings.yKey);
+            KeyboardRow("L - Previous app", sConfig->padSettings.lKey);
+            KeyboardRow("R - Next app", sConfig->padSettings.rKey);
+            KeyboardRow("Up", sConfig->padSettings.upKey);
+            KeyboardRow("Down", sConfig->padSettings.downKey);
+            KeyboardRow("Left", sConfig->padSettings.leftKey);
+            KeyboardRow("Right", sConfig->padSettings.rightKey);
+            KeyboardRow("Start", sConfig->padSettings.startKey);
+            KeyboardRow("Select", sConfig->padSettings.selectKey);
+            KeyboardRow("Settings menu", sConfig->padSettings.guiKey);
+            KeyboardRow("Fast-forward (hold)", sConfig->padSettings.fastForwardKey);
+            KeyboardRow("Fullscreen", sConfig->padSettings.fullScreenKey);
+            ImGui::EndTable();
+        }
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Controller")) {
+        if (activeDevice != 1) AppPadProcessEvent(nullptr, false);
+        activeDevice = 1;
+        if (BeginSettings("ControllerBindings")) {
+            ControllerRow("A - Confirm / interact", sConfig->padSettings.aJoyKey);
+            ControllerRow("B - Cancel / run", sConfig->padSettings.bJoyKey);
+            ControllerRow("X - In-game menu", sConfig->padSettings.xJoyKey);
+            ControllerRow("Y - Registered item", sConfig->padSettings.yJoyKey);
+            ControllerRow("L - Previous app", sConfig->padSettings.lJoyKey);
+            ControllerRow("R - Next app", sConfig->padSettings.rJoyKey);
+            ControllerRow("Start", sConfig->padSettings.startJoyKey);
+            ControllerRow("Select", sConfig->padSettings.selectJoyKey);
+            ImGui::EndTable();
+        }
+        ImGui::SeparatorText("Movement");
+        ImGui::TextWrapped("Use primary for the D-pad and secondary for the left stick.");
+        if (BeginSettings("DirectionBindings")) {
+            ControllerRow("Up - primary", sConfig->padSettings.upJoyKey);
+            ControllerRow("Up - secondary", sConfig->padSettings.upJoyKeySecondary, true);
+            ControllerRow("Down - primary", sConfig->padSettings.downJoyKey);
+            ControllerRow("Down - secondary", sConfig->padSettings.downJoyKeySecondary, true);
+            ControllerRow("Left - primary", sConfig->padSettings.leftJoyKey);
+            ControllerRow("Left - secondary", sConfig->padSettings.leftJoyKeySecondary, true);
+            ControllerRow("Right - primary", sConfig->padSettings.rightJoyKey);
+            ControllerRow("Right - secondary", sConfig->padSettings.rightJoyKeySecondary, true);
+            ImGui::EndTable();
+        }
+        float deadzone = sConfig->padSettings.joyAxisDeadzone * 100.0f / 32767.0f;
+        if (BeginSettings("Deadzone")) {
+            SettingsRow("Axis deadzone", "0% disables filtering. Increase to prevent stick drift.");
+            if (ImGui::SliderFloat("##Deadzone", &deadzone, 0, 95, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
+                sConfig->padSettings.joyAxisDeadzone = (int)(deadzone * 32767.0f / 100.0f);
+                SIM_Config_SaveConfigFile(sConfig);
+            }
+            ImGui::EndTable();
+        }
+        if (ImGui::Button("Reset deadzone")) {
+            sConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
+            SIM_Config_SaveConfigFile(sConfig);
+        }
+        ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
 }
-
-void AppPadInit() {
-    sPendingJoystickBinding = nullptr;
-    sConfig = SIM_GetConfigPtr();
-}
-
-void AppPadMain(bool *openState) {
-    ImGui::Begin("Input", openState);
-
-    ImGui::Text("Keyboard");
-    ImGui::Columns(2, "padKeyboard", true);
-
-    KeySettingButton("A   ", 1, sConfig->padSettings.aKey);
-    KeySettingButton("B   ", 2, sConfig->padSettings.bKey);
-    KeySettingButton("X   ", 3, sConfig->padSettings.xKey);
-    KeySettingButton("Y   ", 4, sConfig->padSettings.yKey);
-    KeySettingButton("L   ", 5, sConfig->padSettings.lKey);
-    KeySettingButton("R   ", 6, sConfig->padSettings.rKey);
-    KeySettingButton("GUI ", 25, sConfig->padSettings.guiKey);
-    KeySettingButton("Speedup ", 26, sConfig->padSettings.fastForwardKey);
-    KeySettingButton("Fullscreen ", 27, sConfig->padSettings.fullScreenKey);
-
-    ImGui::NextColumn();
-
-    KeySettingButton("Up     ", 7,  sConfig->padSettings.upKey);
-    KeySettingButton("Down   ", 8,  sConfig->padSettings.downKey);
-    KeySettingButton("Left   ", 9,  sConfig->padSettings.leftKey);
-    KeySettingButton("Right  ", 10, sConfig->padSettings.rightKey);
-    KeySettingButton("Start  ", 11, sConfig->padSettings.startKey);
-    KeySettingButton("Select ", 12, sConfig->padSettings.selectKey);
-
-    ImGui::Columns(1, "pad2", false);
-    ImGui::Separator();
-    ImGui::Text("Gamepad");
-    ImGui::Columns(2, "padJoystick", true);
-
-    JoystickKeySettingButton("A ", 13, sConfig->padSettings.aJoyKey);
-    JoystickKeySettingButton("B ", 14, sConfig->padSettings.bJoyKey);
-    JoystickKeySettingButton("X ", 15, sConfig->padSettings.xJoyKey);
-    JoystickKeySettingButton("Y ", 16, sConfig->padSettings.yJoyKey);
-    JoystickKeySettingButton("L ", 17, sConfig->padSettings.lJoyKey);
-    JoystickKeySettingButton("R ", 18, sConfig->padSettings.rJoyKey);
-
-    ImGui::NextColumn();
-
-    JoystickKeySettingButton("Start  ", 23, sConfig->padSettings.startJoyKey);
-    JoystickKeySettingButton("Select ", 24, sConfig->padSettings.selectJoyKey);
-
-    ImGui::Columns(1);
-    ImGui::Separator();
-    ImGui::TextUnformatted("Directions: D-pad and left stick work everywhere");
-    if (ImGui::BeginTable("directions", 3, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("Direction");
-        ImGui::TableSetupColumn("Primary");
-        ImGui::TableSetupColumn("Secondary");
-        ImGui::TableHeadersRow();
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Up");
-        ImGui::TableNextColumn(); JoystickBindingButton(19, sConfig->padSettings.upJoyKey);
-        ImGui::TableNextColumn(); JoystickBindingButton(29, sConfig->padSettings.upJoyKeySecondary, true);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Down");
-        ImGui::TableNextColumn(); JoystickBindingButton(20, sConfig->padSettings.downJoyKey);
-        ImGui::TableNextColumn(); JoystickBindingButton(30, sConfig->padSettings.downJoyKeySecondary, true);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Left");
-        ImGui::TableNextColumn(); JoystickBindingButton(21, sConfig->padSettings.leftJoyKey);
-        ImGui::TableNextColumn(); JoystickBindingButton(31, sConfig->padSettings.leftJoyKeySecondary, true);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn(); ImGui::TextUnformatted("Right");
-        ImGui::TableNextColumn(); JoystickBindingButton(22, sConfig->padSettings.rightJoyKey);
-        ImGui::TableNextColumn(); JoystickBindingButton(32, sConfig->padSettings.rightJoyKeySecondary, true);
-        ImGui::EndTable();
-    }
-    ImGui::TextWrapped("Click a binding, then press a direction. Escape cancels. Use Secondary for the left stick.");
-
-    float deadzonePercent = sConfig->padSettings.joyAxisDeadzone * 100.0f / 32767.0f;
-    if (ImGui::SliderFloat("Axis deadzone", &deadzonePercent, 0.0f, 95.0f, "%.0f%%",
-                           ImGuiSliderFlags_AlwaysClamp)) {
-        sConfig->padSettings.joyAxisDeadzone = (int)(deadzonePercent * 32767.0f / 100.0f);
-        sConfigChanged = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reset##deadzone")) {
-        sConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
-        sConfigChanged = true;
-    }
-    ImGui::TextWrapped("Applies to all mapped controller axes. 0%% disables filtering; increase it if the stick drifts.");
-
-    ImGui::End();
-
-    if(sConfigChanged) {
-        SIM_Config_SaveConfigFile(sConfig);
-        sConfigChanged = false;
-    }
-}
-
 }

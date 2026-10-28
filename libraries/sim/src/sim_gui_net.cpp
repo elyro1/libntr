@@ -13,7 +13,7 @@
 
 namespace SIM::GUI {
 
-static constexpr ImVec2 BtnSize = {100, 20};
+
 static char sHostBuf[16] = {0};
 static SIM_config_type * sConfig;
 
@@ -38,20 +38,23 @@ void AppNetInit() {
     strncpy(sHostBuf, sConfig->netSettings.serverIp, 15);
 }
 
-void AppNetMain(bool *openState) {
-    ImGui::Begin("Multiplayer", openState);
+void AppNetContents() {
 
     ImGui::PushID(1);
     ImGui::Text("Host:");
     ImGui::SameLine(0.0f, 1.0f);
-    ImGui::InputText("", sHostBuf, sizeof(sHostBuf)-1, 0, nullptr, nullptr);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##Host", sHostBuf, sizeof(sHostBuf));
     ImGui::PopID();
 
-    if(ImGui::Button("Connect", BtnSize)) {
-        SIM_Net_StartClient(sHostBuf);
+    if(ImGui::Button("Connect")) {
+        if (SIM_Net_StartClient(sHostBuf)) {
+            SDL_strlcpy(sConfig->netSettings.serverIp, sHostBuf, sizeof(sConfig->netSettings.serverIp));
+            SIM_Config_SaveConfigFile(sConfig);
+        }
     }
 
-    if(ImGui::Button("Start Host", BtnSize)) {
+    if(ImGui::Button("Start host")) {
         SIM_Net_StartHost();
     }
 
@@ -59,66 +62,64 @@ void AppNetMain(bool *openState) {
 
     if(SIM_Net_GetCurrentState() != SIM_NET_STATE_UNINITIALIZED) {
         std::string playerCountString = std::format("Players: {}", SIM_Net_GetPlayerCount());
-        ImGui::Text(playerCountString.c_str());
+        ImGui::TextUnformatted(playerCountString.c_str());
 
-        ImVec2 tableSize = {400, 800};
-        ImGui::BeginTable("playersTable", 6, ImGuiTableFlags_SizingStretchSame, tableSize, 400);
-        ImGui::TableHeader("Players");
-        ImGui::TableSetupColumn("ID", 0, 0.1f);
-        ImGui::TableSetupColumn("Status", 0, 0.2f);
-        ImGui::TableSetupColumn("Username", 0, 0.5f);
-        ImGui::TableSetupColumn("AID", 0, 0.1f);
-        ImGui::TableSetupColumn("MPState", 0, 0.2f);
-        ImGui::TableSetupColumn("GGID", 0, 0.2f);
-        ImGui::TableHeadersRow();
+        if (ImGui::BeginTable("playersTable", 6, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_ScrollX, ImVec2(0, 0), ImGui::GetFontSize() * 32)) {
+            ImGui::TableSetupColumn("ID", 0, 0.1f);
+            ImGui::TableSetupColumn("Status", 0, 0.2f);
+            ImGui::TableSetupColumn("Username", 0, 0.5f);
+            ImGui::TableSetupColumn("AID", 0, 0.1f);
+            ImGui::TableSetupColumn("MPState", 0, 0.2f);
+            ImGui::TableSetupColumn("GGID", 0, 0.2f);
+            ImGui::TableHeadersRow();
 
-        const SIM_Net_Player_t* playerList = SIM_Net_GetPlayerList();
-        for(size_t i=0; i< SIM_NET_MAX_PLAYERS; i++) {
-            ImGui::TableNextColumn();
-            if(SIM_Net_GetCurrentPlayerID() == playerList[i].id) {
-                ImGui::Text("%d*", playerList[i].id);
-            } else {
-                ImGui::Text("%d", playerList[i].id);
+            const SIM_Net_Player_t* playerList = SIM_Net_GetPlayerList();
+            for(size_t i=0; i< SIM_NET_MAX_PLAYERS; i++) {
+                ImGui::TableNextColumn();
+                if(SIM_Net_GetCurrentPlayerID() == playerList[i].id) {
+                    ImGui::Text("%d*", playerList[i].id);
+                } else {
+                    ImGui::Text("%d", playerList[i].id);
+                }
+
+                ImGui::TableNextColumn();
+                const char * statusStr;
+                switch(playerList[i].status) {
+                    default:
+                    case SIM_NET_PLAYERSTATUS_NONE:
+                        statusStr = "None";
+                        break;
+                    case SIM_NET_PLAYERSTATUS_DISCONNECTED:
+                        statusStr = "Disconnected";
+                        break;
+                    case SIM_NET_PLAYERSTATUS_CLIENT:
+                        statusStr = "Client";
+                        break;
+                    case SIM_NET_PLAYERSTATUS_HOST:
+                        statusStr = "Host";
+                        break;
+                }
+                ImGui::Text(statusStr);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", playerList[i].userName);
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", playerList[i].aid);
+                ImGui::TableNextColumn();
+                const char * mpStateStr = "Off";
+                if(playerList[i].mpState == SIM_NET_MPSTATE_PARENT) {
+                    mpStateStr = "Parent";
+                } else if(playerList[i].mpState == SIM_NET_MPSTATE_CHILD) {
+                    mpStateStr = "Child";
+                }
+                ImGui::Text(mpStateStr);
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", playerList[i].ggid);
             }
-
-            ImGui::TableNextColumn();
-            const char * statusStr;
-            switch(playerList[i].status) {
-                default:
-                case SIM_NET_PLAYERSTATUS_NONE:
-                    statusStr = "None";
-                    break;
-                case SIM_NET_PLAYERSTATUS_DISCONNECTED:
-                    statusStr = "Disconnected";
-                    break;
-                case SIM_NET_PLAYERSTATUS_CLIENT:
-                    statusStr = "Client";
-                    break;
-                case SIM_NET_PLAYERSTATUS_HOST:
-                    statusStr = "Host";
-                    break;
-            }
-            ImGui::Text(statusStr);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", playerList[i].userName);
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", playerList[i].aid);
-            ImGui::TableNextColumn();
-            const char * mpStateStr = "Off";
-            if(playerList[i].mpState == SIM_NET_MPSTATE_PARENT) {
-                mpStateStr = "Parent";
-            } else if(playerList[i].mpState == SIM_NET_MPSTATE_CHILD) {
-                mpStateStr = "Child";
-            }
-            ImGui::Text(mpStateStr);
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", playerList[i].ggid);
+            ImGui::EndTable();
         }
-        ImGui::EndTable();
     }
 
-    ImGui::End();
 }
 
 }
