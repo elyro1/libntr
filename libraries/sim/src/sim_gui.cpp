@@ -19,13 +19,13 @@ static bool sFocusPanel;
 static bool sShowImGuiDemo;
 static bool sSuppressedKeys[SDL_NUM_SCANCODES];
 static bool sStackSettings;
-static Page sPage = Page::Display;
+static Page sPage = Page::General;
 static ImGuiStyle sBaseStyle;
 static float sScale = 1.0f;
 static std::function<void(std::string)> sFileDialogCallback;
 
 static const char *const sPageNames[] = {
-    "Display", "Graphics", "Audio", "Controls", "Gameplay", "Game speed",
+    "General", "Graphics", "Controls", "Gameplay",
     "Cheats & tools", "Multiplayer", "Developer"
 };
 
@@ -49,7 +49,7 @@ bool ConsumeInputReset() {
 }
 
 void SelectPage(Page page) {
-    if (page < Page::Display || page >= Page::Count || page == sPage) return;
+    if (page < Page::General || page >= Page::Count || page == sPage) return;
     sPage = page;
     AppPadProcessEvent(nullptr, false);
 }
@@ -165,6 +165,7 @@ static void DeveloperContents() {
     ImGui::TextWrapped("Renderer: %s", SIM_GetGraphicsRenderer());
     ImGui::Checkbox("Manual pause", &sManualPause);
     ImGui::TextWrapped("Manual pause stays active after closing settings.");
+    DeveloperLayoutContents();
     ProjectPage(Page::Developer);
     ImGui::SeparatorText("Build");
     ImGui::TextWrapped("libntr: %s", SIM_GetLibntrGitHash());
@@ -173,13 +174,16 @@ static void DeveloperContents() {
 
 static void DrawPage() {
     switch (sPage) {
-    case Page::Display: DisplayContents(); break;
-    case Page::Audio: AudioContents(); break;
-    case Page::Controls: AppPadContents(); break;
-    case Page::GameSpeed:
+    case Page::General:
+        GeneralContents();
+        FastForwardContents();
         ProjectPage(sPage);
-        SpeedContents();
         break;
+    case Page::Graphics:
+        ProjectPage(sPage);
+        GraphicsTimingContents();
+        break;
+    case Page::Controls: AppPadContents(); break;
     case Page::Multiplayer: AppNetContents(); break;
     case Page::Developer: DeveloperContents(); break;
     default: ProjectPage(sPage); break;

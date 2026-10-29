@@ -413,7 +413,7 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->masterVolume = 50;
     aConfig->fastForwardMultiplier = 5.0f;
     aConfig->menuScalePercent = 0;
-    aConfig->pauseWhileMenuOpen = TRUE;
+    aConfig->pauseWhileMenuOpen = FALSE;
 
     aConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
     aConfig->padSettings.upJoyKeySecondary = SIM_CONFIG_JOY_AXIS_MINUS_MASK | 1;
