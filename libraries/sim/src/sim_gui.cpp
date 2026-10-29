@@ -25,12 +25,12 @@ static float sScale = 1.0f;
 static std::function<void(std::string)> sFileDialogCallback;
 
 static const char *const sPageNames[] = {
-    "Display", "Graphics", "Audio", "Controls", "Game speed",
+    "Display", "Graphics", "Audio", "Controls", "Gameplay", "Game speed",
     "Cheats & tools", "Multiplayer", "Developer"
 };
 
 void __attribute__((weak)) ProjectPage(Page page) {
-    if (page == Page::Graphics || page == Page::Tools)
+    if (page == Page::Graphics || page == Page::Tools || page == Page::Gameplay)
         ImGui::TextWrapped("This application does not provide additional settings here.");
 }
 bool __attribute__((weak)) ProjectBack(Page) { return false; }
@@ -260,7 +260,7 @@ void Main() {
                 ImGui::TextDisabled("%s", i == 0 ? "SETTINGS" : "TOOLS");
             }
             if (ImGui::Selectable(sPageNames[i], static_cast<int>(sPage) == i, 0,
-                                  ImVec2(0, ImGui::GetFrameHeight()))) {
+                                  ImVec2(0, ImGui::GetTextLineHeight() + style.FramePadding.y))) {
                 SelectPage(static_cast<Page>(i));
             }
         }
@@ -285,10 +285,11 @@ void Main() {
     }
     if (!stackedFooter) ImGui::SameLine();
     if (ImGui::Button(resume)) SetEnabled(false);
+    const char *saveHint = sPage == Page::Gameplay ? "Gameplay changes use Save" : "Settings save automatically";
     if (footerWidth > (stackedFooter ? resumeWidth : controlsWidth) + style.ItemSpacing.x +
-            ImGui::CalcTextSize("Settings save automatically").x) {
+            ImGui::CalcTextSize(saveHint).x) {
         ImGui::SameLine();
-        ImGui::TextDisabled("Settings save automatically");
+        ImGui::TextDisabled("%s", saveHint);
     }
     ImGui::End();
     if (tight) ImGui::PopStyleVar();

@@ -8,7 +8,7 @@
 
 namespace SIM::GUI {
 
-enum class Page { Display, Graphics, Audio, Controls, GameSpeed, Tools, Multiplayer, Developer, Count };
+enum class Page { Display, Graphics, Audio, Controls, Gameplay, GameSpeed, Tools, Multiplayer, Developer, Count };
 
 void Init(SDL_Window * window, SDL_GLContext context);
 void Main();
