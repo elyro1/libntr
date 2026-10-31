@@ -25,12 +25,12 @@ static float sScale = 1.0f;
 static std::function<void(std::string)> sFileDialogCallback;
 
 static const char *const sPageNames[] = {
-    "General", "Graphics", "Controls", "Gameplay",
+    "General", "Graphics", "Speed & text", "Controls", "Gameplay",
     "Cheats & tools", "Multiplayer", "Developer"
 };
 
 void __attribute__((weak)) ProjectPage(Page page) {
-    if (page == Page::Graphics || page == Page::Tools || page == Page::Gameplay)
+    if (page == Page::Graphics || page == Page::SpeedText || page == Page::Tools || page == Page::Gameplay)
         ImGui::TextWrapped("This application does not provide additional settings here.");
 }
 bool __attribute__((weak)) ProjectBack(Page) { return false; }
@@ -176,12 +176,15 @@ static void DrawPage() {
     switch (sPage) {
     case Page::General:
         GeneralContents();
-        FastForwardContents();
         ProjectPage(sPage);
         break;
     case Page::Graphics:
-        ProjectPage(sPage);
         GraphicsTimingContents();
+        ProjectPage(sPage);
+        break;
+    case Page::SpeedText:
+        ProjectPage(sPage);
+        FastForwardContents();
         break;
     case Page::Controls: AppPadContents(); break;
     case Page::Multiplayer: AppNetContents(); break;

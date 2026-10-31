@@ -26,10 +26,6 @@ void GeneralContents() {
         config->menuScalePercent = scale ? 100 + (scale - 1) * 25 : 0;
         changed = true;
     }
-    SettingsRow("Internal resolution", "Game sharpness; independent of menu size.");
-    int resolution = config->internalResolutionScale;
-    if (ImGui::SliderInt("##Resolution", &resolution, 1, 20, "%dx NDS"))
-        SIM_SetInternalResolutionAfterRender(resolution);
     SettingsRow("Master volume");
     int volume = config->masterVolume * 100 / 127;
     if (ImGui::SliderInt("##Volume", &volume, 0, 100, "%d%%")) {
@@ -65,6 +61,10 @@ void GraphicsTimingContents() {
     auto *config = SIM_GetConfigPtr();
     bool changed = false;
     if (!BeginSettings("GraphicsTimingSettings")) return;
+    SettingsRow("Internal resolution");
+    int resolution = config->internalResolutionScale;
+    if (ImGui::SliderInt("##Resolution", &resolution, 1, 20, "%dx NDS"))
+        SIM_SetInternalResolutionAfterRender(resolution);
     SettingsRow("VSync");
     int vsync = config->vsyncInterval;
     if (ImGui::Combo("##VSync", &vsync, "Off\0Every refresh\0Every second refresh\0")) {
@@ -91,8 +91,6 @@ void FastForwardContents() {
         changed = true;
     }
     ImGui::EndTable();
-    ImGui::TextWrapped("Hold %s to fast-forward during gameplay.",
-        SDL_GetKeyName(config->padSettings.fastForwardKey));
     if (changed) SIM_Config_SaveConfigFile(config);
 }
 }
