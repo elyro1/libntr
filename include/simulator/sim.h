@@ -138,6 +138,8 @@ void SIM_SetFieldEdgeRows(int layer, int firstRow, int endRow);
 void SIM_SetFieldDarknessMask(BOOL enabled);
 // Extend the HM cut-in band without stretching its sprites.
 void SIM_SetFieldMoveCutIn(BOOL enabled);
+// Extend the Gym Leader's scrolling BG3 banner into single-screen side areas.
+void SIM_SetTrainerBannerWide(BOOL enabled);
 // Scale screen-fade window masks to the current viewport, per DS engine.
 void SIM_SetScreenFadeWindows(BOOL main, BOOL sub);
 // Register/unregister a MAIN OBJ VRAM range containing seamless field particles.

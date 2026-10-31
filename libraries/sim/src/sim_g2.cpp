@@ -147,7 +147,7 @@ void G2SIM_CaptureScanline(u32 line) {
   }
 }
 
-static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub);
+static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *alternateBuf = NULL, u32 extraX = 0);
 static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub);
 static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub);
 static void DrawOBJ_RotScale(u32 num, u32 boundwidth, u32 boundheight,
@@ -566,7 +566,20 @@ void G2SIM_PlotPixel(u8 *screenBuf, u8 r, u8 g, u8 b, u32 x, u32 y,
   screenBufBase[3] = 255;
 }
 
-static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
+void G2SIM_DrawTrainerBannerWide(void) {
+  static u8 otherHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
+  memset(otherHalf, 0, sizeof(otherHalf));
+  for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+    DrawBGLine_Text(line, 3, 0, FALSE, otherHalf, 256);
+  }
+  // The caller has bound a 512-wide texture on BG3's texture unit.
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, SIM_NDS_SCREEN_HEIGHT * 2,
+                  GL_RGBA, GL_UNSIGNED_BYTE, bg3tex);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 256, 0, 256, SIM_NDS_SCREEN_HEIGHT * 2,
+                  GL_RGBA, GL_UNSIGNED_BYTE, otherHalf);
+}
+
+static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *alternateBuf, u32 extraX) {
 #ifdef SDK_TRACY_ENABLE
   TracyCZone(ctx, 1);
 #endif
@@ -647,7 +660,8 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   }
 
   const u32 offset = s_ScanlineOffsets[isSub][line][bgnum];
-  xoff += offset & 0x1ff;
+  if (alternateBuf) pixelBuf = alternateBuf;
+  xoff += (offset & 0x1ff) + extraX;
   yoff += (offset >> 16) & 0x1ff;
 
   u16 *curpal;

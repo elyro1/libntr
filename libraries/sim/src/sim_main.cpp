@@ -83,6 +83,8 @@ static int s_FieldEdgeLayer = -1;
 static int s_FieldEdgeRows[2];
 static BOOL s_FieldDarknessMask = FALSE;
 static BOOL s_FieldMoveCutIn = FALSE;
+static BOOL s_TrainerBannerWide = FALSE;
+static GLuint s_TrainerBannerTexture;
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
@@ -752,6 +754,15 @@ void *SIM_RenderInit(void *arg) {
                  SIM_NDS_SCREEN_HEIGHT * 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
   }
 
+  glGenTextures(1, &s_TrainerBannerTexture);
+  glBindTexture(GL_TEXTURE_2D, s_TrainerBannerTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 512, SIM_NDS_SCREEN_HEIGHT * 2,
+               0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
   glGenTextures(1, &s_FieldParticlesTexture);
   glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
   glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
@@ -1224,6 +1235,15 @@ static void DrawEngine(BOOL isSub) {
     }
   }
 
+  const bool wideTrainerBanner = !isSub && singleScreen && s_TrainerBannerWide
+                                 && bgEnabled[3] && bgMode == 0;
+  if (wideTrainerBanner) {
+    glActiveTexture(GL_TEXTURE0 + s_bgTexUnits[3]);
+    glBindTexture(GL_TEXTURE_2D, s_TrainerBannerTexture);
+    G2SIM_DrawTrainerBannerWide();
+  }
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "wideTrainerBanner"), wideTrainerBanner);
+
   // write all OAMs to the textures based on their priorities
   for (int i = 0; i < 4; i++) {
     glActiveTexture(GL_TEXTURE0 + s_objTexUnits[i]);
@@ -1509,6 +1529,10 @@ void SIM_SetScreenFadeWindows(BOOL main, BOOL sub) {
 
 void SIM_SetFieldMoveCutIn(BOOL enabled) {
   s_FieldMoveCutIn = enabled;
+}
+
+void SIM_SetTrainerBannerWide(BOOL enabled) {
+  s_TrainerBannerWide = enabled;
 }
 
 BOOL G2SIM_IsFieldMoveCutInWide(void) {

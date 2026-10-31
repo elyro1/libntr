@@ -4,6 +4,7 @@
 // On an OBJ pixel of G2SIM_DrawOBJ: its color index is in the OBJ extension's palettes (SIM_SetObjExtension)
 #define OBJ_PIXEL_EXT_PLTT 0x200000
 void G2SIM_DrawBG( u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub );
+void G2SIM_DrawTrainerBannerWide(void);
 BOOL G2SIM_HasFieldSprites(void);
 BOOL G2SIM_HasFieldSpriteEdges(void);
 BOOL G2SIM_IsFieldMoveCutInWide(void);

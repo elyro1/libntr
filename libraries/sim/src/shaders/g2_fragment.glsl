@@ -40,6 +40,7 @@ uniform int edgeLayer;
 uniform vec2 edgeRows;
 uniform bool fieldDarknessMask;
 uniform bool fieldMoveCutIn;
+uniform bool wideTrainerBanner;
 uniform bool screenFadeWindows;
 uniform vec4 fieldMoveWindow;
 uniform sampler2DArray fieldParticlesTexture;
@@ -62,6 +63,15 @@ bool insideFieldMoveWindow() {
 }
 
 vec4 sampleBg(int layer) {
+    if (wideTrainerBanner) {
+        if (layer == 3) {
+            if ((windowMask & (1 << layer)) == 0) return vec4(0.0);
+            return texture(bgTexture[layer], vec2(uiCoord.x * 0.5, uiCoord.y));
+        }
+        // Keep the widened field and its overlays behind the banner. When the
+        // field is native-width, the sides have no world to composite.
+        if (fieldWidth == 256.0 && (uiCoord.x < 0.0 || uiCoord.x >= 1.0)) return vec4(0.0);
+    }
     if (fieldMoveCutIn && layer == 3) {
         if (!insideFieldMoveWindow()) return vec4(0.0);
         // Continue the moving pattern at its original pixel scale.
@@ -155,6 +165,8 @@ void main()
     // Fade windows describe a whole-screen reveal, independently of native UI.
     // Sample their native mask across the viewport without stretching the scene.
     float maskX = screenFadeWindows ? fragTexCoord.x : uiCoord.x;
+    if (wideTrainerBanner && (maskX < 0.0 || maskX >= 1.0))
+        maskX = clamp(maskX, 0.0, 254.5 / 256.0);
     int maskPixel = int(floor(maskX * 256.0 + (screenFadeWindows ? 0.0001 : 0.0)));
     // Fade assets use 255 as their full-width exclusive edge. Include the
     // outermost column when widening that edge, as the HM cut-in does.
@@ -182,7 +194,8 @@ void main()
             bgOrder[j] = a;
         }
     }
-    bool filler = singleScreen && fieldWidth == 256.0 && (uiCoord.x < 0.0 || uiCoord.x >= 1.0);
+    bool outside = uiCoord.x < 0.0 || uiCoord.x >= 1.0;
+    bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner;
     if (filler) {
         color = sideBackground();
     } else {
@@ -275,7 +288,7 @@ void main()
         }
     }
     if(currentBgDrawn == 5) {
-        color = backdropColor;
+        color = wideTrainerBanner && fieldWidth == 256.0 && outside ? vec4(0.0, 0.0, 0.0, 1.0) : backdropColor;
     }
     
     } // End scene composition; master brightness also affects the filler.
