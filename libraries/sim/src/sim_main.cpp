@@ -86,6 +86,12 @@ static BOOL s_FieldDarknessMask = FALSE;
 static BOOL s_FieldMoveCutIn = FALSE;
 static BOOL s_TrainerBannerWide = FALSE;
 static GLuint s_TrainerBannerTexture;
+// SIM_SetWideUI: the requested wide 2D width (256 when off), the 3D layer's
+// shift within it, and 512-dot textures of the main engine's text BGs.
+static u32 s_WideUIWidth = 256;
+static int s_WideUI3DOffset = 0;
+static GLuint s_WideBgTexture[4];
+static u8 s_WideBgHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
@@ -96,6 +102,17 @@ static constexpr GLint s_ScanlineBlendTexUnit = 14;
 static u8 s_FieldParticlesPixels[4 * SIM_FIELD_SPRITE_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
+
+static bool WideUIActive() {
+  return s_WideUIWidth > SIM_NDS_SCREEN_WIDTH;
+}
+
+// The single-screen width this frame presents: a wide field or UI, otherwise
+// the native screen with its side border.
+static float PresentedWidth() {
+  const u32 wide = s_FieldViewWidth > s_WideUIWidth ? s_FieldViewWidth : s_WideUIWidth;
+  return wide > SIM_NDS_SCREEN_WIDTH ? (float)wide : s_BorderPresentationWidth;
+}
 
 // SND
 #include <nitro/snd/common/work.h>
@@ -770,6 +787,17 @@ void *SIM_RenderInit(void *arg) {
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 512, SIM_NDS_SCREEN_HEIGHT * 2,
                0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
+  glGenTextures(4, s_WideBgTexture);
+  for (int i = 0; i < 4; i++) {
+    glBindTexture(GL_TEXTURE_2D, s_WideBgTexture[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 512, SIM_NDS_SCREEN_HEIGHT * 2,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  }
+
   glGenTextures(1, &s_FieldParticlesTexture);
   glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
   glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
@@ -1174,7 +1202,36 @@ static void DrawEngine(BOOL isSub) {
   // registered field sprites rendered beyond native width, without clipping their edges.
   const bool fieldParticlesEnabled = !isSub && s_FieldViewWidth > SIM_NDS_SCREEN_WIDTH
                                      && G2SIM_HasFieldSprites();
-  if (fieldParticlesEnabled) {
+  // A wide UI draws every main-engine sprite into the same wide texture, with
+  // the palettes the native composition uses.
+  const bool wideUI = !isSub && (s_reg_GX_POWCNT >> 15) && singleScreen && WideUIActive();
+  if (wideUI) {
+    glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
+    G2SIM_SetWideObjAll(TRUE);
+    for (int priority = 0; priority < 4; priority++) {
+      memset(s_FieldParticlesPixels, 0, sizeof(s_FieldParticlesPixels));
+      for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+        memset(s_FieldSpriteLine, 0, sizeof(u32) * SIM_FIELD_SPRITE_WIDTH);
+        G2SIM_DrawOBJ(line, FALSE, priority << 10, TRUE);
+        const int row = (s_reg_GX_POWCNT >> 15) ? 383 - line : 191 - line;
+        for (int x = 0; x < SIM_FIELD_SPRITE_WIDTH; x++) {
+          const u32 dot = s_FieldSpriteLine[x];
+          const u8 index = dot & 0xFF;
+          if (index) {
+            const u16 *pltt = (u16 *)((dot & OBJ_PIXEL_EXT_PLTT) ? HW_OBJ_PLTT_EXT : HW_OBJ_PLTT);
+            u8 *pixel = s_FieldParticlesPixels + 4 * (row * SIM_FIELD_SPRITE_WIDTH + x);
+            SIM_u16ToRGB(pltt[index], &pixel[0], &pixel[1], &pixel[2]);
+            pixel[3] = 255;
+          }
+        }
+      }
+      glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, priority,
+                     SIM_FIELD_SPRITE_WIDTH, SIM_NDS_SCREEN_HEIGHT * 2, 1,
+                     GL_RGBA, GL_UNSIGNED_BYTE, s_FieldParticlesPixels);
+    }
+    G2SIM_SetWideObjAll(FALSE);
+  } else if (fieldParticlesEnabled) {
     glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
     glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
     const bool extendEdges = G2SIM_HasFieldSpriteEdges();
@@ -1228,8 +1285,10 @@ static void DrawEngine(BOOL isSub) {
 
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldParticlesEnabled"),
                      fieldParticlesEnabled);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "wideUI"), wideUI);
 
   int drawnOAMs = 0;
+  int wideBgMask = 0;
 
   // Draw the BGs
   for (int i = 0; i < 4; i++) {
@@ -1237,6 +1296,16 @@ static void DrawEngine(BOOL isSub) {
 
     if (bgEnabled[bgOrder[i]]) {
       G2SIM_DrawBG(bgOrder[i], bgMode, bg0as3d, isSub);
+      if (wideUI && G2SIM_DrawBGWideHalf(curBgNum, bgMode, bg0as3d, s_WideBgHalf)) {
+        u8 *const native[] = {bg0tex, bg1tex, bg2tex, bg3tex};
+        glActiveTexture(GL_TEXTURE0 + s_bgTexUnits[curBgNum]);
+        glBindTexture(GL_TEXTURE_2D, s_WideBgTexture[curBgNum]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, SIM_NDS_SCREEN_HEIGHT * 2,
+                        GL_RGBA, GL_UNSIGNED_BYTE, native[curBgNum]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 256, 0, 256, SIM_NDS_SCREEN_HEIGHT * 2,
+                        GL_RGBA, GL_UNSIGNED_BYTE, s_WideBgHalf);
+        wideBgMask |= 1 << curBgNum;
+      }
     } else {
       glActiveTexture(GL_TEXTURE0 + s_bgTexUnits[bgOrder[i]]);
       glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
@@ -1251,6 +1320,7 @@ static void DrawEngine(BOOL isSub) {
     G2SIM_DrawTrainerBannerWide();
   }
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "wideTrainerBanner"), wideTrainerBanner);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "wideBgMask"), wideBgMask);
 
   // write all OAMs to the textures based on their priorities
   for (int i = 0; i < 4; i++) {
@@ -1359,7 +1429,7 @@ static void DrawEngine(BOOL isSub) {
       masterBrightMode);
 
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
-                     singleScreen ? (s_FieldViewWidth > 256 ? (float)s_FieldViewWidth : s_BorderPresentationWidth) : 256.0f);
+                     singleScreen ? PresentedWidth() : 256.0f);
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "borderWidth"),
                      (float)s_WindowViewWidth);
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "fieldWidth"),
@@ -1384,7 +1454,7 @@ static void DrawEngine(BOOL isSub) {
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "singleScreen"), singleScreen);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageTexture"),
                      s_SideAverageTexUnit);
-  const bool averageSides = singleScreen && s_FieldViewWidth == SIM_NDS_SCREEN_WIDTH &&
+  const bool averageSides = singleScreen && s_FieldViewWidth == SIM_NDS_SCREEN_WIDTH && !WideUIActive() &&
                             s_WindowViewWidth > SIM_NDS_SCREEN_WIDTH && s_SideAverageReady;
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageValid"), averageSides);
   glBindVertexArray(g2vertexArray);
@@ -1511,7 +1581,9 @@ static void HandleJoystickKeyUp(int aKey) {
 static void Set3DViewport() {
   const u32 scale = s_SIM_config.internalResolutionScale;
   const u32 width = s_FieldViewWidth;
-  glViewport((s_MaxViewWidth - width) / 2 * scale,
+  // A wide UI keeps the native 3D layer, shifted within the view.
+  const int shift = width == SIM_NDS_SCREEN_WIDTH && WideUIActive() ? s_WideUI3DOffset : 0;
+  glViewport(((s_MaxViewWidth - width) / 2 + shift) * scale,
              (s_reg_GX_POWCNT >> 15) ? SIM_NDS_SCREEN_HEIGHT * scale : 0,
              width * scale, SIM_NDS_SCREEN_HEIGHT * scale);
 }
@@ -1562,6 +1634,30 @@ u32 SIM_SetFieldWidescreen(BOOL enabled) {
     Set3DViewport();
   }
   return width;
+}
+
+u32 SIM_SetWideUI(BOOL enabled) {
+  const u32 width = enabled && s_SIM_config.screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY
+                        ? s_WindowViewWidth : SIM_NDS_SCREEN_WIDTH;
+  if (s_WideUIWidth != width) {
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    s_WideUIWidth = width;
+    if (!enabled) s_WideUI3DOffset = 0;
+    Set3DViewport();
+  }
+  return width;
+}
+
+void SIM_SetWideUI3DOffset(int dots) {
+  const int limit = (int)(s_MaxViewWidth - SIM_NDS_SCREEN_WIDTH) / 2;
+  dots = dots < -limit ? -limit : dots > limit ? limit : dots;
+  if (s_WideUI3DOffset != dots) {
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    s_WideUI3DOffset = dots;
+    Set3DViewport();
+  }
 }
 
 extern "C" void SIM_Autopilot_Frame(void);
@@ -1650,7 +1746,7 @@ void *SIM_Render(void *arg) {
     default:
     case SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY:
       // Present the width used by this frame's projection; resized width applies next frame.
-      aspectRatio = (s_FieldViewWidth > 256 ? (float)s_FieldViewWidth : s_BorderPresentationWidth) / SIM_NDS_SCREEN_HEIGHT;
+      aspectRatio = PresentedWidth() / SIM_NDS_SCREEN_HEIGHT;
       break;
     case SIM_CONFIG_SCREEN_LAYOUT_VERTICAL:
       aspectRatio = 256.0f / 384.0f;

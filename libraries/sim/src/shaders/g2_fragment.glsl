@@ -45,6 +45,10 @@ uniform bool screenFadeWindows;
 uniform vec4 fieldMoveWindow;
 uniform sampler2DArray fieldParticlesTexture;
 uniform bool fieldParticlesEnabled;
+// SIM_SetWideUI: OBJs come from fieldParticlesTexture everywhere, and the BG
+// layers in wideBgMask are 512 dots wide, the native screen in their first half.
+uniform bool wideUI;
+uniform int wideBgMask;
 uniform bool singleScreen;
 uniform sampler2D sideAverageTexture;
 uniform bool sideAverageValid;
@@ -116,11 +120,18 @@ vec4 sampleBg(int layer) {
             return texture(bgTexture[layer], vec2(clamp(uiCoord.x, 0.5 / 256.0, 255.5 / 256.0), uiCoord.y));
         }
     }
+    if (wideUI && ((wideBgMask >> layer) & 1) != 0) {
+        return texture(bgTexture[layer], vec2(fract(uiCoord.x * 0.5), uiCoord.y));
+    }
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
     return texture(bgTexture[layer], uiCoord);
 }
 vec4 sampleObj(int layer) {
     if (!fieldMoveCutIn && (windowMask & 16) == 0) return vec4(0.0);
+    if (wideUI) {
+        if ((windowMask & 16) == 0 || layer > 3) return vec4(0.0);
+        return texture(fieldParticlesTexture, vec3(worldCoord, float(layer)));
+    }
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) {
         if (fieldParticlesEnabled && fieldWidth > 256.0 && bg0as3d != 0 && layer < 4) {
             if (fieldMoveCutIn && !insideFieldMoveWindow()) return vec4(0.0);
@@ -195,7 +206,7 @@ void main()
         }
     }
     bool outside = uiCoord.x < 0.0 || uiCoord.x >= 1.0;
-    bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner;
+    bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner && !wideUI;
     if (filler) {
         color = sideBackground();
     } else {

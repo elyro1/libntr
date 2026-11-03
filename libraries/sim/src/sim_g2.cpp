@@ -347,8 +347,32 @@ void G2SIM_DrawBG(u8 bgNum, u8 bgMode, u8 bg03D, u8 isSub) {
 #endif
 }
 
+BOOL G2SIM_DrawBGWideHalf(u8 bgNum, u8 bgMode, u8 bg03D, u8 *half) {
+  bool text;
+  switch (bgNum) {
+  case 0: text = bgMode <= 5 && !bg03D; break;
+  case 1: text = bgMode <= 5; break;
+  case 2: text = bgMode == 0 || bgMode == 1 || bgMode == 3; break;
+  case 3: text = bgMode == 0; break;
+  default: text = false; break;
+  }
+  // Only 512-dot screens have dots of their own beyond the native 256.
+  const u16 controls[] = {s_reg_G2_BG0CNT, s_reg_G2_BG1CNT, s_reg_G2_BG2CNT, s_reg_G2_BG3CNT};
+  if (!text || !(controls[bgNum] & 0x4000) || !s_SIM_DBG_BGenable[bgNum]) return FALSE;
+  memset(half, 0, 4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2);
+  for (int line = 0; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+    DrawBGLine_Text(line, bgNum, 0, FALSE, half, 256);
+  }
+  return TRUE;
+}
+
 static struct { u32 address; u32 size; BOOL repeat; BOOL extendEdges; } s_FieldSpriteRanges[16];
 static BOOL s_FieldSpriteDraw = FALSE;
+static BOOL s_WideObjAll = FALSE;
+
+void G2SIM_SetWideObjAll(BOOL enabled) {
+  s_WideObjAll = enabled;
+}
 u32 s_FieldSpriteLine[SIM_FIELD_SPRITE_WIDTH];
 static u8 s_FieldSpriteWindow[SIM_FIELD_SPRITE_WIDTH];
 
@@ -406,7 +430,7 @@ extern "C" void SIM_SetObjExtension(int firstOam, u32 charOffset) {
 }
 
 static inline bool G2SIM_IsObjExt(u32 num, u8 isSub) {
-  return !isSub && !s_FieldSpriteDraw && (int)num >= s_ObjExtFirstOam;
+  return !isSub && (!s_FieldSpriteDraw || s_WideObjAll) && (int)num >= s_ObjExtFirstOam;
 }
 
 void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
@@ -453,7 +477,9 @@ void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
       continue;
     }
     BOOL repeat = FALSE;
-    if (fieldOnly) {
+    if (fieldOnly && s_WideObjAll) {
+      if (isSub) continue;
+    } else if (fieldOnly) {
       if (isSub || !(dispcnt & 0x10)) continue;
       const u32 address = (attrib[2] & 0x03FF) << (5 + ((dispcnt >> 20) & 3));
       bool tiled = false;

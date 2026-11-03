@@ -121,6 +121,17 @@ SIM_config_type * SIM_GetConfigPtr();
 u32 SIM_SetFieldWidescreen(BOOL enabled);
 // Repair isolated native-resolution terrain raster gaps for this field frame.
 void SIM_SetFieldCoverageRepair(BOOL enabled);
+// Wide 2D UI: the main engine's text BG layers and all of its sprites draw
+// across the whole single-screen view (top_only layout), not only the native
+// 256 dots. Returns the logical width (256..448); the native screen stays
+// centered, so native x = view x - (width - 256) / 2. Text BG layers with
+// 512-dot-wide screens show the rest of their wrap there (others leave the
+// sides to the backdrop), and sprite X uses OAM's 9-bit range. The 3D layer keeps its native 256 dots; see the offset.
+// Apps opt in on entry and pass FALSE on exit.
+u32 SIM_SetWideUI(BOOL enabled);
+// Shift the native-width 3D layer this many dots right (clamped to +-96)
+// within the wide UI view, e.g. to put 3D Pokémon sprites in a side panel.
+void SIM_SetWideUI3DOffset(int dots);
 #if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
 void SIM_ResetVirtualTextureAddresses(void);
 void *SIM_GetExtendedTextureStorage(u32 address, u32 size);
