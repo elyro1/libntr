@@ -132,6 +132,10 @@ u32 SIM_SetWideUI(BOOL enabled);
 // Shift the native-width 3D layer this many dots right (clamped to +-96)
 // within the wide UI view, e.g. to put 3D Pokémon sprites in a side panel.
 void SIM_SetWideUI3DOffset(int dots);
+// Main-engine master brightness leaves the scanlines above this one at full
+// brightness (0, the default, darkens them all), e.g. to keep a menu strip lit
+// while the screen below fades. Apps set it back to 0 when they are done.
+void SIM_SetMasterBrightnessFirstLine(u32 line);
 #if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
 void SIM_ResetVirtualTextureAddresses(void);
 void *SIM_GetExtendedTextureStorage(u32 address, u32 size);

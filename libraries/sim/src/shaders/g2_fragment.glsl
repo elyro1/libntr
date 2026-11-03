@@ -28,6 +28,8 @@ smooth in vec2 fragTexCoord;
 //uniform float inAlpha;
 uniform float inMasterBrightFactor;
 uniform int inMasterBrightMode;
+// SIM_SetMasterBrightnessFirstLine: scanlines above it keep full brightness.
+uniform int masterBrightFirstLine;
 out vec4 color;
 uniform float presentationWidth;
 uniform float borderWidth;
@@ -308,7 +310,10 @@ void main()
         color.a = 1.0;
         return;
     }
-    if(inMasterBrightMode == 1) {
+    float masterLine = ((topScreen == 1 ? 1.0 : 0.5) - fragTexCoord.y) * 384.0;
+    if (masterLine < float(masterBrightFirstLine)) {
+        // Lit strip: no master brightness.
+    } else if(inMasterBrightMode == 1) {
         // brightness up
         color.r = color.r + ((1.0 - color.r) * (inMasterBrightFactor/16.0));
         color.g = color.g + ((1.0 - color.g) * (inMasterBrightFactor/16.0));

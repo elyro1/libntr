@@ -93,6 +93,8 @@ static int s_WideUI3DOffset = 0;
 static GLuint s_WideBgTexture[4];
 static u8 s_WideBgHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
+// SIM_SetMasterBrightnessFirstLine: main-engine scanlines above it skip master brightness.
+static u32 s_MasterBrightFirstLine = 0;
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
 static GLuint s_WindowMaskTexture;
@@ -1427,6 +1429,9 @@ static void DrawEngine(BOOL isSub) {
       g2shaderProgramID,
       glGetUniformLocation(g2shaderProgramID, "inMasterBrightMode"),
       masterBrightMode);
+  glProgramUniform1i(g2shaderProgramID,
+                     glGetUniformLocation(g2shaderProgramID, "masterBrightFirstLine"),
+                     isSub ? 0 : (int)s_MasterBrightFirstLine);
 
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
                      singleScreen ? PresentedWidth() : 256.0f);
@@ -1658,6 +1663,10 @@ void SIM_SetWideUI3DOffset(int dots) {
     s_WideUI3DOffset = dots;
     Set3DViewport();
   }
+}
+
+void SIM_SetMasterBrightnessFirstLine(u32 line) {
+  s_MasterBrightFirstLine = line > SIM_NDS_SCREEN_HEIGHT ? SIM_NDS_SCREEN_HEIGHT : line;
 }
 
 extern "C" void SIM_Autopilot_Frame(void);
