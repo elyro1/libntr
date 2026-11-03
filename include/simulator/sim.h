@@ -119,6 +119,8 @@ SIM_config_type * SIM_GetConfigPtr();
 // Field rendering opts in each logic frame; all other scenes use 4:3.
 // Returns the logical width for the matching projection (256..448).
 u32 SIM_SetFieldWidescreen(BOOL enabled);
+// Repair isolated native-resolution terrain raster gaps for this field frame.
+void SIM_SetFieldCoverageRepair(BOOL enabled);
 #if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
 void SIM_ResetVirtualTextureAddresses(void);
 void *SIM_GetExtendedTextureStorage(u32 address, u32 size);

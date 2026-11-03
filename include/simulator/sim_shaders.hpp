@@ -11,6 +11,7 @@ extern const char * G2FragmentShader;
 
 extern const char * BloomVertexShader;
 extern const char * BloomFragmentShader;
+extern const char * FieldCoverageFragmentShader;
 
 }
 

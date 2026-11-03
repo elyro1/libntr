@@ -28,5 +28,9 @@ const char * BloomFragmentShader =
 #include "shaders/bloom_fragment.glsl"
 ;
 
+const char * FieldCoverageFragmentShader =
+#include "shaders/field_coverage_fragment.glsl"
+;
+
 }
 

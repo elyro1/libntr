@@ -33,6 +33,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/sim.h>
 #include <simulator/sim_3d_target.hpp>
 #include <simulator/sim_bloom.hpp>
+#include <simulator/sim_field_coverage.hpp>
 #include <simulator/sim_audio.h>
 #include <simulator/sim_frame_pacer.h>
 #include <simulator/sim_frame_profile.h>
@@ -347,6 +348,8 @@ static GLuint g2vertexBuffer;
 static GLuint g3RenderBufferId;
 static SIM3DTarget s3DTarget;
 static SIMBloom sBloom;
+static SIMFieldCoverage sFieldCoverage;
+static bool sFieldCoverageApplied = false;
 static constexpr GLint s_BloomTexUnit = 15;
 static float sBloomRequested, sBloomApplied;
 static bool sAntialiasRequested = false;
@@ -410,6 +413,10 @@ void SIM_SetFieldGrade(const float shadows[3], const float highlights[3], float 
 
 // The field camera of this frame, for collecting reflected lights.
 static float sFieldWorldFromClip[9], sFieldWorldOffset[3];
+static bool sFieldCoverageRepair = false;
+void SIM_SetFieldCoverageRepair(BOOL enabled) {
+  sFieldCoverageRepair = enabled;
+}
 void SIM_SetFieldWorld(const float worldFromClip[9], const float offset[3], const float camera[3], float time) {
   G3SIM_FlushArray();
   G3SIM_DrawItems();
@@ -965,6 +972,7 @@ void *SIM_RenderInit(void *arg) {
   CompileFragmentShader(g2FragmentShader, SIM::G2FragmentShader);
   LinkShader(g2shaderProgramID, g2VertexShader, g2FragmentShader);
 
+  sFieldCoverage.Init(SIM::BloomVertexShader, SIM::FieldCoverageFragmentShader, s_MaxViewWidth, SIM_NDS_SCREEN_HEIGHT * 2);
   sBloom.Init(SIM::BloomVertexShader, SIM::BloomFragmentShader);
   sBloom.Resize(s_MaxViewWidth, SIM_NDS_SCREEN_HEIGHT * 2, s_SIM_config.internalResolutionScale);
   glUseProgram(g2shaderProgramID);
@@ -1276,7 +1284,7 @@ static void DrawEngine(BOOL isSub) {
 
   if (bgEnabled[0]) {
     if (bg0as3d) {
-      glBindTexture(GL_TEXTURE_2D, g3RenderTextureId);
+      glBindTexture(GL_TEXTURE_2D, sFieldCoverageApplied ? sFieldCoverage.Color() : g3RenderTextureId);
     } else {
       glBindTexture(GL_TEXTURE_2D, s_bgTextureId[0]);
     }
@@ -1285,7 +1293,7 @@ static void DrawEngine(BOOL isSub) {
   }
 
   glActiveTexture(GL_TEXTURE11);
-  glBindTexture(GL_TEXTURE_2D, g3FogTextureId);
+  glBindTexture(GL_TEXTURE_2D, sFieldCoverageApplied ? sFieldCoverage.Fog() : g3FogTextureId);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "g3FogTexture"), 11);
   glActiveTexture(GL_TEXTURE0 + s_BloomTexUnit);
   glBindTexture(GL_TEXTURE_2D, sBloom.Texture());
@@ -1576,6 +1584,9 @@ void *SIM_Render(void *arg) {
   // Draw the translucent 3D stuff
   G3SIM_DrawItems();
   s3DTarget.Resolve(g3FrameBuffer);
+  sFieldCoverageApplied = sFieldCoverageRepair && s_SIM_config.internalResolutionScale == 1
+      && !s3DTarget.Enabled() && sFieldCoverage.Ready();
+  if (sFieldCoverageApplied) sFieldCoverage.Run(g3RenderTextureId, g3FogTextureId);
   sBloomApplied = sBloom.Ready() ? sBloomRequested : 0;
   if (sBloomApplied > 0) {
     sBloom.Run(g3EmissionTextureId, s_MaxViewWidth * s_SIM_config.internalResolutionScale,
@@ -2074,6 +2085,7 @@ void *SIM_Render(void *arg) {
   G3SIM_SetFieldContactShadow(noContactShadow);
   SIM_SetFieldEmissionDebug(FALSE);
   // Enhancements are opt-in per field frame, including native-width fields.
+  sFieldCoverageRepair = false;
   ResetFieldGrade();
   glProgramUniform4f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "atmosphereFog"), 0, 0, 0, 0);
   glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "fieldWorld"), 0);
@@ -2268,7 +2280,7 @@ int main(int argc, char *argv[]) {
 
   SIM_RenderInit(NULL);
   G3SIM_DrawInit();
-  atexit([] { s3DTarget.Destroy(); G3SIM_ClearTextureCache(); });
+  atexit([] { sFieldCoverage.Destroy(); s3DTarget.Destroy(); G3SIM_ClearTextureCache(); });
 
 // Init Sockets (only needed on windows)
 #ifdef SDK_BUILD_WIN64
