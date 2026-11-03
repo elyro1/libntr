@@ -21,7 +21,7 @@ WVRResult WVR_StartUpAsync (GXVRamARM7 vram, WVRCallbackFunc callback, void * ar
 
     #ifdef SDK_PORT
     if(callback) {
-        callback(NULL, WVR_RESULT_SUCCESS);
+        callback(arg, WVR_RESULT_SUCCESS);
     }
     return WVR_RESULT_OPERATING;
     #endif
@@ -120,6 +120,14 @@ WVRResult WVR_TerminateAsync (WVRCallbackFunc callback, void * arg)
     OSIntrMode e;
 
     PXI_Init();
+    #ifdef SDK_PORT
+    // Native startup completes locally, without an ARM7 wireless driver.
+    if (callback) {
+        callback(arg, WVR_RESULT_SUCCESS);
+    }
+    return WVR_RESULT_OPERATING;
+    #endif
+
     if (!PXI_IsCallbackReady(PXI_FIFO_TAG_WVR, PXI_PROC_ARM7)) {
         return WVR_RESULT_DISABLE;
     }

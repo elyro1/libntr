@@ -1027,48 +1027,33 @@ void G3SIM_MtxMode(GXMtxMode mode)
     return;
 }
 
-//CurrentMatrix = CurrentMatrix * mtxs
-void G3SIM_MtxMult33(MtxFx33 * mtx)
+static void multiplyMatrix33(G3SIM_Matrix_t * matrix, const MtxFx33 * mtx)
 {
-    G3SIM_Matrix_t mtxTemp;
-    G3SIM_Matrix_t * currentMatrix;
-    G3SIM_Matrix_t currentMatrixCopy;
-    fx32 curSum;
-    currentMatrix = getCurrentMatrix();
-    mtxTemp.nums[0][0] = mtx->_00;
-    mtxTemp.nums[0][1] = mtx->_01;
-    mtxTemp.nums[0][2] = mtx->_02;
-    mtxTemp.nums[0][3] = 0;
-    mtxTemp.nums[1][0] = mtx->_10;
-    mtxTemp.nums[1][1] = mtx->_11;
-    mtxTemp.nums[1][2] = mtx->_12;
-    mtxTemp.nums[1][3] = 0;
-    mtxTemp.nums[2][0] = mtx->_20;
-    mtxTemp.nums[2][1] = mtx->_21;
-    mtxTemp.nums[2][2] = mtx->_22;
-    mtxTemp.nums[2][3] = 0;
-    mtxTemp.nums[3][0] = 0;
-    mtxTemp.nums[3][1] = 0;
-    mtxTemp.nums[3][2] = 0;
-    mtxTemp.nums[3][3] = FX32_ONE;
-    memcpy( &currentMatrixCopy, currentMatrix, sizeof(G3SIM_Matrix_t));
+    const G3SIM_Matrix_t original = *matrix;
 
-    //Do the multiplication
+    // Pre-multiply by the homogeneous 4x4 form of mtx. Its last row is
+    // (0, 0, 0, 1), so translation stays intact, but all four columns change.
     for( int i=0; i < 3; i++ )
     {
-        for(int j=0; j < 3; j++)
+        for(int j=0; j < 4; j++)
         {
-            curSum = 0;
+            fx32 curSum = 0;
             for( int k=0; k < 3; k++ )
             {
-                curSum = curSum + (FX_Mul(mtxTemp.nums[i][k], currentMatrixCopy.nums[k][j]));
+                curSum += FX_Mul(mtx->m[i][k], original.nums[k][j]);
             }
-            currentMatrix->nums[i][j] = curSum;
-            if( s_curMtxMode == GX_MTXMODE_POSITION_VECTOR )
-            {
-                currentPositionMatrix.nums[i][j] = curSum;
-            }
+            matrix->nums[i][j] = curSum;
         }
+    }
+}
+
+void G3SIM_MtxMult33(MtxFx33 * mtx)
+{
+    multiplyMatrix33(getCurrentMatrix(), mtx);
+    if( s_curMtxMode == GX_MTXMODE_POSITION_VECTOR )
+    {
+        // Position and vector matrices may differ; multiply each independently.
+        multiplyMatrix33(&currentPositionMatrix, mtx);
     }
 
     if( s_curMtxMode != GX_MTXMODE_TEXTURE )
