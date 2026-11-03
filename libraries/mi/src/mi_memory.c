@@ -98,7 +98,26 @@ void MI_Copy16B(const void* pSrc, void* pDest)
 void MIi_CpuClear32( u32 data, void *destp, u32 size )
 {
     SIM_assert_msg(size < HW_MAIN_MEM_MAIN_SIZE, "Attempt to call MIi_CpuClear32 with a size of %d bytes, which is larger than the DS memory.", size);
-    memset( destp, data, size );
+    // Keep zero clears and other byte-repeated patterns on the fast libc path.
+    if (data == (u32)(u8)data * 0x01010101u) {
+        memset(destp, (u8)data, size);
+        return;
+    }
+    // Repeat the complete DS word, not the low byte as memset would do.
+    // memcpy also handles native unaligned buffers and a final partial word.
+    const u8 pattern[4] = {data, data >> 8, data >> 16, data >> 24};
+    u8 *destination = destp;
+    while (size >= sizeof(pattern)) {
+        memcpy(destination, pattern, sizeof(pattern));
+        destination += sizeof(pattern);
+        size -= sizeof(pattern);
+    }
+    if (size) memcpy(destination, pattern, size);
+}
+
+void MIi_CpuClearFast( u32 data, void *destp, u32 size )
+{
+    MIi_CpuClear32(data, destp, size);
 }
 
 void MIi_CpuCopy32( const void *srcp, void *destp, u32 size )

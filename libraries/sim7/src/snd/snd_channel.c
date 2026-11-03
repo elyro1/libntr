@@ -6,6 +6,28 @@
 #include <math.h>
 #endif
 
+
+#ifdef SDK_PORT
+/* Hardware channel registers are spaced 16 bytes apart on DS. Native
+ * simulator channel arrays have independent bases and element widths. */
+static void *NativeChannelRegister(u64 base, int offset)
+{
+    int channel = offset >> 4;
+    if (base == (u64)REG_SOUND0CNT_ADDR || base == (u64)REG_SOUND0CNT_VOL_16_ADDR ||
+        base == (u64)REG_SOUND0CNT_VOL_ADDR) return &s_SIM_sndcnt[channel];
+    if (base == (u64)REG_SOUND0CNT_PAN_ADDR) return (u8 *)&s_SIM_sndcnt[channel] + 2;
+    if (base == (u64)REG_SOUND0CNT_8_ADDR) return (u8 *)&s_SIM_sndcnt[channel] + 3;
+    if (base == (u64)REG_SOUND0TMR_ADDR) return &s_SIM_sndtmr[channel];
+    if (base == (u64)REG_SOUND0RPT_PT_ADDR) return &s_SIM_sndpnt[channel];
+    if (base == (u64)REG_SOUND0RPT_LEN_ADDR) return &s_SIM_sndlen[channel];
+    if (base == (u64)REG_SOUND0SAD_ADDR) return &s_SIM_sndsad[channel];
+    return (void *)(base + offset);
+}
+#define SND_CHANNEL_REGISTER(base, offset) NativeChannelRegister((u64)(base), (offset))
+#else
+#define SND_CHANNEL_REGISTER(base, offset) ((base) + (offset))
+#endif
+
 #define M_PI       3.14159265358979323846
 
 
@@ -89,14 +111,14 @@ void SND_SetupChannelPcm7(int chNo,
     pan = 127 - pan;
 #endif
     #ifdef SDK_BUILD_ARM
-    *((REGType32v *)(REG_SOUND0CNT_ADDR + offset)) = REG_SND_SOUND0CNT_FIELD(FALSE, format, loop, 0,
+    *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_ADDR, offset))) = REG_SND_SOUND0CNT_FIELD(FALSE, format, loop, 0,
                                                                              pan, 0,
                                                                              shift, volume);
 
-    *((REGType16v *)(REG_SOUND0TMR_ADDR + offset)) = (u16)(0x10000 - timer);
-    *((REGType16v *)(REG_SOUND0RPT_PT_ADDR + offset)) = (u16)loopStart;
-    *((REGType32v *)(REG_SOUND0RPT_LEN_ADDR + offset)) = (u32)loopLen;
-    *((REGType32v *)(REG_SOUND0SAD_ADDR + offset)) = (u32)dataaddr;
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0TMR_ADDR, offset))) = (u16)(0x10000 - timer);
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0RPT_PT_ADDR, offset))) = (u16)loopStart;
+    *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0RPT_LEN_ADDR, offset))) = (u32)loopLen;
+    *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0SAD_ADDR, offset))) = (u32)dataaddr;
     #endif
 
     #ifdef SDK_PORT
@@ -134,11 +156,11 @@ void SND_SetupChannelPsg7(int chNo,
     pan = 127 - pan;
 #endif
 
-    *((REGType32v *)(REG_SOUND0CNT_ADDR + offset)) = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_PSG, 0,
+    *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_ADDR, offset))) = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_PSG, 0,
                                                                              duty, pan, 0,
                                                                              shift, volume);
 
-    *((REGType16v *)(REG_SOUND0TMR_ADDR + offset)) = (u16)(0x10000 - timer);
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0TMR_ADDR, offset))) = (u16)(0x10000 - timer);
 
     #ifdef SDK_PORT
     s_SIM_sndcnt[chNo] = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_PSG, 0,
@@ -171,12 +193,12 @@ void SND_SetupChannelNoise7(int chNo, int volume, SNDChannelDataShift shift, int
     pan = 127 - pan;
 #endif
 
-    *((REGType32v *)(REG_SOUND0CNT_ADDR + offset)) = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_NOISE, 0,
+    *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_ADDR, offset))) = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_NOISE, 0,
                                                                              0,
                                                                              pan, 0,
                                                                              shift, volume);
 
-    *((REGType16v *)(REG_SOUND0TMR_ADDR + offset)) = (u16)(0x10000 - timer);
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0TMR_ADDR, offset))) = (u16)(0x10000 - timer);
 
     #ifdef SDK_PORT
     s_SIM_sndcnt[chNo] = REG_SND_SOUND0CNT_FIELD(FALSE, SND_WAVE_FORMAT_NOISE, 0,
@@ -195,7 +217,7 @@ void SND_StopChannel7(int chNo, s32 flags)
     SDK_MINMAX_ASSERT(chNo, SND_CHANNEL_MIN, SND_CHANNEL_MAX);
 
     #ifdef SDK_BUILD_ARM
-    reg = (REGType32v *)(REG_SOUND0CNT_ADDR + SND_CHANNEL_REG_OFFSET(chNo));
+    reg = (REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_ADDR, SND_CHANNEL_REG_OFFSET(chNo)));
     #else
     reg = (REGType32v *)(&s_SIM_sndcnt[chNo]);  
     #endif
@@ -219,11 +241,11 @@ void SND_SetChannelVolume7(int chNo, int volume, SNDChannelDataShift shift)
     sOrgVolume[chNo] = (u8)volume;
     if (sSurroundDecay > 0 && ((1 << chNo) & SURROUND_CHANNEL_MASK))
     {
-        pan = *((REGType8v *)(REG_SOUND0CNT_PAN_ADDR + SND_CHANNEL_REG_OFFSET(chNo)));
+        pan = *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_PAN_ADDR, SND_CHANNEL_REG_OFFSET(chNo))));
         volume = CalcSurroundDecay(volume, pan);
     }
 
-    *((REGType16v *)(REG_SOUND0CNT_VOL_16_ADDR + SND_CHANNEL_REG_OFFSET(chNo))) = REG_SND_SOUND0CNT_VOL_16_FIELD(0,
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_VOL_16_ADDR, SND_CHANNEL_REG_OFFSET(chNo)))) = REG_SND_SOUND0CNT_VOL_16_FIELD(0,
                                                                                                                  shift,
                                                                                                                  volume);
     
@@ -251,7 +273,7 @@ void SND_SetChannelTimer7(int chNo, int timer)
     SDK_MINMAX_ASSERT(chNo, SND_CHANNEL_MIN, SND_CHANNEL_MAX);
     SDK_MINMAX_ASSERT(timer, SND_CHANNEL_TIMER_MIN, SND_CHANNEL_TIMER_MAX);
 
-    *((REGType16v *)(REG_SOUND0TMR_ADDR + SND_CHANNEL_REG_OFFSET(chNo))) = (u16)(0x10000 - timer);
+    *((REGType16v *)(SND_CHANNEL_REGISTER(REG_SOUND0TMR_ADDR, SND_CHANNEL_REG_OFFSET(chNo)))) = (u16)(0x10000 - timer);
 
     #ifdef SDK_PORT
     s_SIM_sndtmr[chNo] = (0x10000 - timer) & 0xFFFF;
@@ -274,7 +296,7 @@ void SND_SetChannelPan7(int chNo, int pan)
 #endif
 
     #ifdef SDK_BUILD_ARM
-    *((REGType8v *)(REG_SOUND0CNT_PAN_ADDR + SND_CHANNEL_REG_OFFSET(chNo))) = (u8)pan;
+    *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_PAN_ADDR, SND_CHANNEL_REG_OFFSET(chNo)))) = (u8)pan;
     #else
     u32 reg = s_SIM_sndcnt[chNo];
     reg &= ~(0b1111111 << 16);
@@ -286,7 +308,7 @@ void SND_SetChannelPan7(int chNo, int pan)
     if (sSurroundDecay > 0 && ((1 << chNo) & SURROUND_CHANNEL_MASK))
     {
         volume = CalcSurroundDecay(sOrgVolume[chNo], pan);
-        *((REGType8v *)(REG_SOUND0CNT_VOL_ADDR + SND_CHANNEL_REG_OFFSET(chNo))) = (u8)volume;
+        *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_VOL_ADDR, SND_CHANNEL_REG_OFFSET(chNo)))) = (u8)volume;
         #ifdef SDK_PORT
         //sndcnt_p->volumeMul = volume & 0b1111111;
         //sndcnt_p->volumeDiv = (volume > 8) & 0b11;
@@ -305,7 +327,7 @@ BOOL SND_IsChannelActive7(int chNo)
     SDK_MINMAX_ASSERT(chNo, SND_CHANNEL_MIN, SND_CHANNEL_MAX);
 
     #ifdef SDK_BUILD_ARM
-    reg = *((REGType8v *)(REG_SOUND0CNT_8_ADDR + SND_CHANNEL_REG_OFFSET(chNo)));
+    reg = *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_8_ADDR, SND_CHANNEL_REG_OFFSET(chNo))));
     #else
     reg = *((REGType32v *)(&s_SIM_sndcnt[chNo]));
     #endif
@@ -322,7 +344,7 @@ void SND_StartChannel7(int chNo)
     SDK_MINMAX_ASSERT(chNo, SND_CHANNEL_MIN, SND_CHANNEL_MAX);
 
     #ifdef SDK_BUILD_ARM
-    *((REGType8v *)(REG_SOUND0CNT_8_ADDR + SND_CHANNEL_REG_OFFSET(chNo)))
+    *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_8_ADDR, SND_CHANNEL_REG_OFFSET(chNo))))
         |= REG_SND_SOUND0CNT_8_E_MASK;
     #else
     s_SIM_sndcnt[chNo] |= REG_SND_SOUND0CNT_E_MASK;
@@ -342,7 +364,7 @@ void SND_SetMasterPan7(int pan)
         for (chNo = 0; chNo < SND_CHANNEL_NUM; chNo++)
         {
             offset = SND_CHANNEL_REG_OFFSET(chNo);
-            *((REGType8v *)(REG_SOUND0CNT_PAN_ADDR + offset)) = (u8)pan;
+            *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_PAN_ADDR, offset))) = (u8)pan;
         }
     }
     else
@@ -350,7 +372,7 @@ void SND_SetMasterPan7(int pan)
         for (chNo = 0; chNo < SND_CHANNEL_NUM; chNo++)
         {
             offset = SND_CHANNEL_REG_OFFSET(chNo);
-            *((REGType8v *)(REG_SOUND0CNT_PAN_ADDR + offset)) = sOrgPan[chNo];
+            *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_PAN_ADDR, offset))) = sOrgPan[chNo];
         }
     }
 }
@@ -362,7 +384,7 @@ u32 SND_GetChannelControl(int chNo)
     #ifdef SDK_PORT
     return s_SIM_sndcnt[chNo];
     #else
-    return *((REGType32v *)(REG_SOUND0CNT_ADDR + SND_CHANNEL_REG_OFFSET(chNo)));
+    return *((REGType32v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_ADDR, SND_CHANNEL_REG_OFFSET(chNo))));
     #endif
 }
 
@@ -381,11 +403,11 @@ void SNDi_SetSurroundDecay7(int decay)
         if ((1 << chNo) & SURROUND_CHANNEL_MASK)
         {
             offset = SND_CHANNEL_REG_OFFSET(chNo);
-            pan = *((REGType8v *)(REG_SOUND0CNT_PAN_ADDR + offset));
+            pan = *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_PAN_ADDR, offset)));
 
             volume = CalcSurroundDecay(sOrgVolume[chNo], pan);
 
-            *((REGType8v *)(REG_SOUND0CNT_VOL_ADDR + offset)) = (u8)volume;
+            *((REGType8v *)(SND_CHANNEL_REGISTER(REG_SOUND0CNT_VOL_ADDR, offset))) = (u8)volume;
         }
     }
 }
