@@ -3,6 +3,39 @@
 
 #include "../include/mi_dma.h"
 
+#ifdef SDK_PORT
+/* Native geometry is consumed immediately, without DS DMA registers or IRQs. */
+void MI_SendGXCommand(u32 dmaNo, const void *src, u32 commandLength)
+{
+    MIi_ASSERT_DMANO(dmaNo);
+    MIi_ASSERT_SRC_ALIGN4(src);
+    if (commandLength == 0) return;
+    draw_msg_t *msg = malloc(sizeof(*msg));
+    u8 *commands = malloc(commandLength);
+    memcpy(commands, src, commandLength);
+    msg->type = DRAW_CMD_G3_CMD_LIST;
+    msg->data.ptr = commands;
+    msg->size = commandLength;
+    SIM_HandleG3Command(msg);
+    free(msg);
+}
+
+void MI_SendGXCommandAsync(u32 dmaNo, const void *src, u32 commandLength, MIDmaCallback callback, void *arg)
+{
+    MI_SendGXCommand(dmaNo, src, commandLength);
+    MIi_CallCallback(callback, arg);
+}
+
+void MI_SendGXCommandFast(u32 dmaNo, const void *src, u32 commandLength)
+{
+    MI_SendGXCommand(dmaNo, src, commandLength);
+}
+
+void MI_SendGXCommandAsyncFast(u32 dmaNo, const void *src, u32 commandLength, MIDmaCallback callback, void *arg)
+{
+    MI_SendGXCommandAsync(dmaNo, src, commandLength, callback, arg);
+}
+#else
 #define MIi_GX_LENGTH_ONCE  (118 * sizeof(u32))
 
 typedef struct {
@@ -223,4 +256,5 @@ static void MIi_DMAFastCallback (void *)
 	MIi_GXDmaParams.isBusy = FALSE;
 	MIi_CallCallback(MIi_GXDmaParams.callback, MIi_GXDmaParams.arg);
 }
+#endif // SDK_PORT
 #endif
