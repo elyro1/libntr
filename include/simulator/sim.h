@@ -136,6 +136,18 @@ void SIM_SetWideUI3DOffset(int dots);
 // brightness (0, the default, darkens them all), e.g. to keep a menu strip lit
 // while the screen below fades. Apps set it back to 0 when they are done.
 void SIM_SetMasterBrightnessFirstLine(u32 line);
+// Main-screen crossfades. SIM_HoldMainScreen takes a snapshot of the next
+// presented main screen and keeps showing it on the scanlines from firstLine
+// down (the ones above stay live), so an app can rebuild the screen out of
+// sight; SIM_IsMainScreenHeld turns TRUE once the snapshot is up. Master
+// brightness still applies to the snapshot. SIM_ReleaseMainScreen blends from
+// the snapshot to the live screen over the given frames (0 cuts at once).
+void SIM_HoldMainScreen(u32 firstLine);
+BOOL SIM_IsMainScreenHeld(void);
+void SIM_ReleaseMainScreen(u32 frames);
+// Moves a hold's first line, e.g. to 0 when the strip above it goes away too:
+// those scanlines then show the snapshot's copy of them.
+void SIM_SetHeldMainScreenFirstLine(u32 firstLine);
 #if defined(SDK_BUILD_LINUX) || defined(SDK_BUILD_WIN64)
 void SIM_ResetVirtualTextureAddresses(void);
 void *SIM_GetExtendedTextureStorage(u32 address, u32 size);

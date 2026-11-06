@@ -5,6 +5,7 @@ extern "C" int NitroSpMain(void *arg);
 
 #include <string>
 #include <mutex>
+#include <atomic>
 #include <unordered_map>
 #include <pthread.h>
 #include <SDL2/SDL.h>
@@ -95,6 +96,21 @@ static u8 s_WideBgHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
 // SIM_SetMasterBrightnessFirstLine: main-engine scanlines above it skip master brightness.
 static u32 s_MasterBrightFirstLine = 0;
+// SIM_HoldMainScreen: a copy of the presented frame, drawn over the live main
+// screen from s_HeldFirstLine down with the weight s_HeldFadeLeft / s_HeldFadeFrames.
+// The game thread requests; the render thread captures and fades.
+static constexpr GLint s_HeldScreenTexUnit = 16;
+static GLuint s_HeldScreenTexture;
+static int s_HeldScreenSize[2];
+static std::atomic<bool> s_HoldRequested{false};
+static std::atomic<bool> s_HoldCaptured{false};
+static std::atomic<u32> s_ReleaseFrames{0};
+static std::atomic<bool> s_ReleaseRequested{false};
+static std::atomic<u32> s_HeldFirstLine{0};
+static u32 s_HeldFadeLeft = 0;
+static u32 s_HeldFadeFrames = 0;
+static int s_DrawableSize[2];
+static bool s_HeldScreenAvailable = false;
 static GLuint s_FieldParticlesTexture;
 static constexpr GLint s_FieldParticlesTexUnit = 12;
 static GLuint s_WindowMaskTexture;
@@ -973,6 +989,22 @@ void *SIM_RenderInit(void *arg) {
   glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
   glActiveTexture(GL_TEXTURE0);
 
+  // SIM_HoldMainScreen's snapshot, sized to the drawable on capture. It needs a
+  // 17th fragment sampler; without one, holds cut straight to the live screen.
+  {
+    GLint units = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+    s_HeldScreenAvailable = units > s_HeldScreenTexUnit;
+    glGenTextures(1, &s_HeldScreenTexture);
+    glActiveTexture(GL_TEXTURE0 + (s_HeldScreenAvailable ? s_HeldScreenTexUnit : 0));
+    glBindTexture(GL_TEXTURE_2D, s_HeldScreenTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    if (!s_HeldScreenAvailable) glBindTexture(GL_TEXTURE_2D, dummyScreenTextureId);
+    glActiveTexture(GL_TEXTURE0);
+  }
+
   // Per-scanline windows and color effects shared by every layer.
   glGenTextures(1, &s_WindowMaskTexture);
   glActiveTexture(GL_TEXTURE0 + s_WindowMaskTexUnit);
@@ -1032,6 +1064,50 @@ void *SIM_RenderInit(void *arg) {
   clock_gettime(CLOCK_MONOTONIC, &s_SIM_lastFrameEnd);
 
   return nullptr;
+}
+
+// SIM_HoldMainScreen's weight for this frame's main screen: 1 while held, then
+// falling over the release's frames.
+static float HeldScreenWeight() {
+  if (s_ReleaseRequested.exchange(false)) {
+    s_HoldRequested = false;
+    s_HeldFadeLeft = s_HoldCaptured.exchange(false) ? s_ReleaseFrames.load() : 0;
+    s_HeldFadeFrames = s_HeldFadeLeft;
+  }
+  if (!s_HeldScreenAvailable || s_DrawableSize[0] != s_HeldScreenSize[0] ||
+      s_DrawableSize[1] != s_HeldScreenSize[1]) {
+    s_HeldFadeLeft = 0;
+    return 0.0f;
+  }
+  if (s_HoldCaptured) return 1.0f;
+  if (s_HeldFadeLeft == 0) return 0.0f;
+  return (float)s_HeldFadeLeft-- / (float)(s_HeldFadeFrames + 1);
+}
+
+// Copies the frame drawn so far (the main screen, before the GUI) once a hold asks.
+static void CaptureHeldScreen() {
+  if (!s_HoldRequested) return;
+  if (s_HeldScreenAvailable && s_DrawableSize[0] > 0 && s_DrawableSize[1] > 0) {
+    GLint activeTexture;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+    glActiveTexture(GL_TEXTURE0 + s_HeldScreenTexUnit);
+    glBindTexture(GL_TEXTURE_2D, s_HeldScreenTexture);
+    if (s_HeldScreenSize[0] != s_DrawableSize[0] || s_HeldScreenSize[1] != s_DrawableSize[1]) {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, s_DrawableSize[0], s_DrawableSize[1], 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, NULL);
+      s_HeldScreenSize[0] = s_DrawableSize[0];
+      s_HeldScreenSize[1] = s_DrawableSize[1];
+    }
+    GLint readFramebuffer;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, s_DrawableSize[0], s_DrawableSize[1]);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
+    glActiveTexture(activeTexture);
+  }
+  s_HeldFadeLeft = 0;
+  s_HoldRequested = false;
+  s_HoldCaptured = true;
 }
 
 static void DrawEngine(BOOL isSub) {
@@ -1432,6 +1508,13 @@ static void DrawEngine(BOOL isSub) {
   glProgramUniform1i(g2shaderProgramID,
                      glGetUniformLocation(g2shaderProgramID, "masterBrightFirstLine"),
                      isSub ? 0 : (int)s_MasterBrightFirstLine);
+  const float heldWeight = isSub ? 0.0f : HeldScreenWeight();
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "heldScreenTexture"),
+                     s_HeldScreenTexUnit);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "heldScreenWeight"),
+                     heldWeight);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "heldScreenFirstLine"),
+                     (int)s_HeldFirstLine.load());
 
   glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
                      singleScreen ? PresentedWidth() : 256.0f);
@@ -1491,6 +1574,9 @@ static void DrawEngine(BOOL isSub) {
                        s_BorderPresentationWidth);
   }
   DrawScreenQuad();
+  if (!isSub) {
+    CaptureHeldScreen();
+  }
 
   // Clear out the textures
   for (int i = 0; i < 4; i++) {
@@ -1669,6 +1755,26 @@ void SIM_SetMasterBrightnessFirstLine(u32 line) {
   s_MasterBrightFirstLine = line > SIM_NDS_SCREEN_HEIGHT ? SIM_NDS_SCREEN_HEIGHT : line;
 }
 
+void SIM_HoldMainScreen(u32 firstLine) {
+  s_HeldFirstLine = firstLine > SIM_NDS_SCREEN_HEIGHT ? SIM_NDS_SCREEN_HEIGHT : firstLine;
+  s_ReleaseRequested = false;
+  s_HoldCaptured = false;
+  s_HoldRequested = true;
+}
+
+BOOL SIM_IsMainScreenHeld(void) {
+  return s_HoldCaptured;
+}
+
+void SIM_ReleaseMainScreen(u32 frames) {
+  s_ReleaseFrames = frames;
+  s_ReleaseRequested = true;
+}
+
+void SIM_SetHeldMainScreenFirstLine(u32 firstLine) {
+  s_HeldFirstLine = firstLine > SIM_NDS_SCREEN_HEIGHT ? SIM_NDS_SCREEN_HEIGHT : firstLine;
+}
+
 extern "C" void SIM_Autopilot_Frame(void);
 extern "C" void SIM_Autopilot_BeforeSwap(int width, int height);
 
@@ -1782,6 +1888,8 @@ void *SIM_Render(void *arg) {
     // OpenGL uses drawable pixels; mouse input remains in SDL window coordinates.
     int drawableWidth, drawableHeight;
     SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+    s_DrawableSize[0] = drawableWidth;
+    s_DrawableSize[1] = drawableHeight;
     glViewport(viewX * drawableWidth / windowWidth, viewY * drawableHeight / windowHeight,
                viewWidth * drawableWidth / windowWidth, viewHeight * drawableHeight / windowHeight);
 

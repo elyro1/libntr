@@ -30,6 +30,10 @@ uniform float inMasterBrightFactor;
 uniform int inMasterBrightMode;
 // SIM_SetMasterBrightnessFirstLine: scanlines above it keep full brightness.
 uniform int masterBrightFirstLine;
+// SIM_HoldMainScreen: the held frame (drawable pixels), mixed in from heldScreenFirstLine down.
+uniform sampler2D heldScreenTexture;
+uniform float heldScreenWeight;
+uniform int heldScreenFirstLine;
 out vec4 color;
 uniform float presentationWidth;
 uniform float borderWidth;
@@ -311,6 +315,10 @@ void main()
         return;
     }
     float masterLine = ((topScreen == 1 ? 1.0 : 0.5) - fragTexCoord.y) * 384.0;
+    if (heldScreenWeight > 0.0 && masterLine >= float(heldScreenFirstLine)) {
+        vec3 held = texelFetch(heldScreenTexture, ivec2(gl_FragCoord.xy), 0).rgb;
+        color.rgb = mix(color.rgb, held, heldScreenWeight);
+    }
     if (masterLine < float(masterBrightFirstLine)) {
         // Lit strip: no master brightness.
     } else if(inMasterBrightMode == 1) {
