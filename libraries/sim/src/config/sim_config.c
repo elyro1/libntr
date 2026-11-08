@@ -5,7 +5,6 @@
 #include <simulator/config/sim_config.h>
 
 #include <string.h>
-#include <wchar.h>
 
 #include <SDL2/SDL.h>
 
@@ -23,6 +22,35 @@ static BOOL StringToBool(const char * str);
 static const char * ScreenLayoutTypeToString(SIM_config_screen_layout_type layout);
 static SIM_config_screen_layout_type StringToScreenLayoutType(const char * str);
 
+
+// DS owner text is bounded UTF-16, independent of the host wchar_t size.
+static u8 CopyNvramText(u16 *destination, size_t capacity, const char *value)
+{
+    memset(destination, 0, capacity * sizeof(*destination));
+    u16 *converted = (u16 *)SDL_iconv_string("UTF-16LE", "UTF-8", value, strlen(value) + 1);
+    size_t length = 0;
+    if (converted) {
+        while (length < capacity && converted[length]) {
+            // Do not truncate a UTF-16 surrogate pair at the field boundary.
+            if (length + 1 == capacity && converted[length] >= 0xd800 && converted[length] <= 0xdbff)
+                break;
+            destination[length] = converted[length];
+            ++length;
+        }
+        SDL_free(converted);
+    }
+    return (u8)length;
+}
+
+static void WriteNvramText(FILE *file, const char *key, const u16 *source, size_t capacity, size_t length)
+{
+    u16 text[NVRAM_CONFIG_COMMENT_LENGTH + 1] = {0};
+    if (length > capacity) length = capacity;
+    memcpy(text, source, length * sizeof(*source));
+    char *converted = SDL_iconv_string("UTF-8", "UTF-16LE", (const char *)text, (length + 1) * sizeof(*text));
+    fprintf(file, "%s=%s\n", key, converted ? converted : "");
+    SDL_free(converted);
+}
 
 static int IniHandler(void* user, const char* section, const char* name,
                    const char* value)
@@ -213,19 +241,12 @@ static int IniHandler(void* user, const char* section, const char* name,
         config->osNvramConfig.ncd.owner.birthday.day = atoi(value);
     }
     if(MATCH("OSNVRAM", "Owner_Nickname")) {
-        memset(config->osNvramConfig.ncd.owner.nickname.str, 0, NVRAM_CONFIG_NICKNAME_LENGTH*2);
-
-        int valueLen = strlen(value);
-        for(int i=0; i < valueLen; i++) {
-            u16 outChar = value[i];
-            config->osNvramConfig.ncd.owner.nickname.str[i] = outChar;
-        }
-        config->osNvramConfig.ncd.owner.nickname.length = (u8)wcslen((wchar_t*)config->osNvramConfig.ncd.owner.nickname.str);
+        config->osNvramConfig.ncd.owner.nickname.length = CopyNvramText(
+            config->osNvramConfig.ncd.owner.nickname.str, NVRAM_CONFIG_NICKNAME_LENGTH, value);
     }
     if(MATCH("OSNVRAM", "Owner_Comment")) {
-        memset(config->osNvramConfig.ncd.owner.comment.str, 0, NVRAM_CONFIG_COMMENT_LENGTH*2);
-        swprintf((wchar_t*)config->osNvramConfig.ncd.owner.comment.str, (NVRAM_CONFIG_COMMENT_LENGTH)-1, L"%s", value);
-        config->osNvramConfig.ncd.owner.comment.length = wcslen((wchar_t*)config->osNvramConfig.ncd.owner.comment.str);
+        config->osNvramConfig.ncd.owner.comment.length = CopyNvramText(
+            config->osNvramConfig.ncd.owner.comment.str, NVRAM_CONFIG_COMMENT_LENGTH, value);
     }
     //Alarm
     if(MATCH("OSNVRAM", "Alarm_Hour")) {
@@ -470,7 +491,8 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->macAddr[5] = rand();
 
     memset(&aConfig->osNvramConfig, 0, sizeof(NVRAMConfig));
-    wcscpy((wchar_t*)aConfig->osNvramConfig.ncd.owner.nickname.str, L"Player");
+    aConfig->osNvramConfig.ncd.owner.nickname.length = CopyNvramText(
+        aConfig->osNvramConfig.ncd.owner.nickname.str, NVRAM_CONFIG_NICKNAME_LENGTH, "Player");
     aConfig->osNvramConfig.ncd.option.input_nickname = TRUE;
     aConfig->osNvramConfig.ncd.option.input_favoriteColor = TRUE;
     aConfig->osNvramConfig.ncd.option.input_language = TRUE;
@@ -552,8 +574,10 @@ void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
     fprintf(configFile, "Owner_FavoriteColor=%d\n", aConfig->osNvramConfig.ncd.owner.favoriteColor);
     fprintf(configFile, "Owner_BirthdayMonth=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.month);
     fprintf(configFile, "Owner_BirthdayDay=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.day);
-    fprintf(configFile, "Owner_Nickname=%ls\n", aConfig->osNvramConfig.ncd.owner.nickname.str);
-    fprintf(configFile, "Owner_Comment=%ls\n", aConfig->osNvramConfig.ncd.owner.comment.str);
+    WriteNvramText(configFile, "Owner_Nickname", aConfig->osNvramConfig.ncd.owner.nickname.str,
+        NVRAM_CONFIG_NICKNAME_LENGTH, aConfig->osNvramConfig.ncd.owner.nickname.length);
+    WriteNvramText(configFile, "Owner_Comment", aConfig->osNvramConfig.ncd.owner.comment.str,
+        NVRAM_CONFIG_COMMENT_LENGTH, aConfig->osNvramConfig.ncd.owner.comment.length);
     fprintf(configFile, "Alarm_Hour=%d\n", aConfig->osNvramConfig.ncd.alarm.hour);
     fprintf(configFile, "Alarm_Minute=%d\n", aConfig->osNvramConfig.ncd.alarm.minute);
     fprintf(configFile, "Alarm_Second=%d\n", aConfig->osNvramConfig.ncd.alarm.second);
