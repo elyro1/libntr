@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include <nitro/gx/g3.h>
 #include <nitro/hw/X86/ioreg.h>

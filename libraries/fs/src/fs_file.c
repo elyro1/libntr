@@ -17,6 +17,7 @@
 #include "../include/command.h"
 
 #ifdef SDK_PORT
+#include <ctype.h>
 #include <string.h>
 #include <SDL2/SDL.h>
 #include <simulator/sim_RomExtractor.h>

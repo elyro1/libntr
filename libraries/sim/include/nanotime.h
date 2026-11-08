@@ -186,7 +186,7 @@ bool nanotime_step(nanotime_step_data* const stepper);
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
+#include <windows.h>
 
 #ifndef NANOTIME_NOW_IMPLEMENTED
 uint64_t nanotime_now() {
@@ -285,7 +285,7 @@ void nanotime_sleep(uint64_t nsec_count) {
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <Windows.h>
+#include <windows.h>
 void nanotime_yield() {
 	YieldProcessor();
 }
