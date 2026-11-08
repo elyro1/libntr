@@ -584,7 +584,7 @@ static void* getTextureVramBank()
 			vramBank = (void *)HW_LCDC_VRAM_C;
 			break;
 		case GX_VRAM_TEX_0_D:
-			vramBank = (void *)HW_LCDC_VRAM_A;
+			vramBank = (void *)HW_LCDC_VRAM_D;
 			break;
 		default:
 			//?
@@ -592,6 +592,23 @@ static void* getTextureVramBank()
 	}
 	
 	return vramBank;
+}
+
+// Where a texture slot address is: the pairs of banks that aren't next to each other in LCDC memory have a slot each
+static u8* getTextureVramAddress(u32 offset)
+{
+	const u32 slot = offset >> 17;
+	const u32 rest = offset & 0x1ffff;
+	u64 bank = 0;
+	switch( s_SIM_GXVRamTex ){
+		case GX_VRAM_TEX_01_AC: bank = slot == 0 ? HW_LCDC_VRAM_A : HW_LCDC_VRAM_C; break;
+		case GX_VRAM_TEX_01_AD: bank = slot == 0 ? HW_LCDC_VRAM_A : HW_LCDC_VRAM_D; break;
+		case GX_VRAM_TEX_01_BD: bank = slot == 0 ? HW_LCDC_VRAM_B : HW_LCDC_VRAM_D; break;
+		case GX_VRAM_TEX_012_ABD: bank = slot == 0 ? HW_LCDC_VRAM_A : slot == 1 ? HW_LCDC_VRAM_B : HW_LCDC_VRAM_D; break;
+		case GX_VRAM_TEX_012_ACD: bank = slot == 0 ? HW_LCDC_VRAM_A : slot == 1 ? HW_LCDC_VRAM_C : HW_LCDC_VRAM_D; break;
+		default: return (u8 *)getTextureVramBank() + offset;
+	}
+	return (u8 *)bank + rest;
 }
 
 static void* getTexPlttVramBank()
@@ -634,10 +651,13 @@ static void G3SIM_ApplyDepthViewport()
         viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
+extern "C" void SIM_G3BeginFrame(void);
+
 void G3SIM_DrawArray()
 {
 	if( s_G3DrawCurVertIdx != 0 )
 	{
+		SIM_G3BeginFrame();
 		ApplyFieldEffect(sFieldEffectMode, sFieldEffectPhase, sFieldEffectBloom, sFieldSurface, sFieldContactShadow);
 		G3SIM_ApplyDepthViewport();
 		glProgramUniform1i(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "useWBuffer"), s_SIM_useWBuffer);
@@ -804,7 +824,7 @@ static G3Texture *G3SIM_AcquireTexture() {
             vramTex = (u8 *)SIM_GetExtendedTextureStorage(s_texImageParam.textureOffset, 0);
         else
 #endif
-            vramTex = (u8 *)getTextureVramBank() + s_texImageParam.textureOffset;
+            vramTex = getTextureVramAddress(s_texImageParam.textureOffset);
         u8 *vramPltt = (u8 *)getTexPlttVramBank() + s_texPlttBase;
         const u32 pixels = s_texImageParam.textureSSize * s_texImageParam.textureTSize;
         u32 sourceSize = pixels, paletteSize = 0;
@@ -819,7 +839,7 @@ static G3Texture *G3SIM_AcquireTexture() {
         case GX_TEXFMT_COMP4x4: {
             const u32 blocks = pixels / 16;
             const u32 indexOffset = GX_COMP4x4_PLTT_IDX(s_texImageParam.textureOffset);
-            const u8 *indices = (u8 *)getTextureVramBank() + indexOffset;
+            const u8 *indices = getTextureVramAddress(indexOffset);
             compressedSource.assign(vramTex, vramTex + blocks * 4);
             compressedSource.insert(compressedSource.end(), indices, indices + blocks * 2);
             compressedPalette.resize(blocks * 8, 0);
@@ -1032,6 +1052,9 @@ void G3SIM_FlushArray()
 
 void G3SIM_DrawItems()
 {
+	if (s_G3DrawItemListCount != 0) {
+		SIM_G3BeginFrame();
+	}
 	//TODO sort the items by Z coordinate
 
 

@@ -1593,8 +1593,18 @@ void G3SIM_SpecEmi(u32 data)
 }
 
 //SwapBuffers
+extern "C" void SIM_G3BeginFrame(void);
+
 void G3SIM_SwapBuffers(u8 depthBufferMode)
 {
+    // The DS renders a frame's translucent polygons after all its opaque ones,
+    // at the swap. A game may submit one frame over two VBlanks (the field at
+    // 30 fps), so drawing them at a VBlank before the swap lets the rest of
+    // the frame's opaque geometry, such as the ground, cover them.
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    // A frame that swaps without drawing shows the rear plane alone
+    SIM_G3BeginFrame();
     s_SIM_useWBuffer = depthBufferMode;
     s_swapBuffersCalledThisFrame = TRUE;
 }

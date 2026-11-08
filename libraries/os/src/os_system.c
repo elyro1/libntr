@@ -1,4 +1,7 @@
 #include <nitro/os.h>
+#ifdef SDK_PORT
+#include <simulator/sim.h>
+#endif
 #include <nitro/code32.h>
 
 #ifdef SDK_PORT
@@ -175,6 +178,19 @@ void OS_WaitInterrupt (BOOL clear, OSIrqMask irqFlags)
     if (clear) {
         (void)OS_ClearIrqCheckFlag(irqFlags);
     }
+
+    #ifdef SDK_PORT
+    // The simulator's VBlank is the frame that OS_WaitIrq renders, and no interrupt sets the check flag, so a wait
+    // for it here renders that frame too instead of spinning forever
+    if (irqFlags == OS_IE_V_BLANK) {
+        SIM_PreRenderVBlank();
+        SIM_Render(NULL);
+        SIM_PostRenderVBlank();
+        (void)OS_RestoreIrq(ime);
+        (void)OS_RestoreInterrupts(cpsrIrq);
+        return;
+    }
+    #endif
 
     while (!(OS_GetIrqCheckFlag() & irqFlags)) {
         #ifdef SDK_BUILD_ARM

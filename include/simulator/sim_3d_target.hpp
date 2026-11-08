@@ -8,8 +8,9 @@
 #include <simulator/glad/glad.h>
 #endif
 
-// Multisample only the scene, its fog attributes and its emission. The existing
-// textures remain the resolve target consumed by the DS background compositor.
+// The scene, its fog attributes and its emission draw here, multisampled when antialiasing is on, and resolve into
+// the textures that the DS background compositor reads when the game swaps the 3D buffers. As on the DS, a frame that
+// the game draws over two frames (the field's 30 fps) shows only when it is complete.
 class SIM3DTarget {
     static constexpr int kColors = 3;
     GLuint framebuffer = 0;
@@ -36,9 +37,10 @@ public:
 
     int Samples() const { return sampleCount; }
 
+    // Whether the scene is multisampled
     bool Enabled() const
     {
-        return framebuffer != 0;
+        return sampleCount >= 2;
     }
 
     void Resize(int w, int h, bool enabled)
@@ -61,13 +63,20 @@ public:
         while (samples >= 2 && bytes * samples * 3 > (kColors + 1) * 256ull * 1024 * 1024) {
             samples /= 2;
         }
-        if (enabled && samples >= 2) {
+        if (!enabled || samples < 2) {
+            samples = 0;
+        }
+        {
             glGenFramebuffers(1, &framebuffer);
             glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
             glGenRenderbuffers(kColors + 1, buffers);
             for (int i = 0; i <= kColors; i++) {
                 glBindRenderbuffer(GL_RENDERBUFFER, buffers[i]);
-                glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, i < kColors ? GL_RGBA8 : GL_DEPTH24_STENCIL8, width, height);
+                if (samples != 0) {
+                    glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, i < kColors ? GL_RGBA8 : GL_DEPTH24_STENCIL8, width, height);
+                } else {
+                    glRenderbufferStorage(GL_RENDERBUFFER, i < kColors ? GL_RGBA8 : GL_DEPTH24_STENCIL8, width, height);
+                }
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER,
                     i < kColors ? GL_COLOR_ATTACHMENT0 + i : GL_DEPTH_STENCIL_ATTACHMENT,
                     GL_RENDERBUFFER,
@@ -76,7 +85,7 @@ public:
             const GLenum attachments[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
             glDrawBuffers(kColors, attachments);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-                std::fprintf(stderr, "3D multisampling unavailable; using the standard target\n");
+                std::fprintf(stderr, "3D back buffer unavailable; drawing to the displayed target\n");
                 Destroy();
                 // Allocation failure is handled by the standard target.
                 while (glGetError() != GL_NO_ERROR) { }

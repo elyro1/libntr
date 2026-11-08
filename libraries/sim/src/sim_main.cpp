@@ -94,6 +94,27 @@ static GLuint s_ScanlineBlendTexture;
 static constexpr GLint s_WindowMaskTexUnit = 13;
 static constexpr GLint s_ScanlineBlendTexUnit = 14;
 static u8 s_FieldParticlesPixels[4 * SIM_FIELD_SPRITE_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
+// The VRAM display mode's bitmap, on objTexture[4]'s unit, which the shader declares no longer
+static GLuint s_VramDisplayTexture;
+static constexpr GLint s_VramDisplayTexUnit = 8;
+// The display capture's target: the main engine at the DS's size, which the capture reads and writes to VRAM
+static GLuint s_CaptureFramebuffer;
+static GLuint s_CaptureTexture;
+// The capture again at the internal resolution, which BG2 or BG3 shows, filtered through its affine matrix, while its
+// bitmap still holds what the capture wrote. The DS's 256x192 copy, scaled up by an affine BG and then by the internal
+// resolution, showed as a grid of uneven blocks (the building entrance's zoom)
+static GLuint s_HiResCaptureFramebuffer;
+static GLuint s_HiResCaptureTexture;
+static u32 s_HiResCaptureTargetScale;
+// The capture that the texture holds: its bank, write offset, size and what it wrote there
+static bool s_HiResCaptureValid;
+static u32 s_HiResCaptureBank, s_HiResCaptureOffset, s_HiResCaptureWidth, s_HiResCaptureHeight;
+static u16 s_HiResCapturePixels[SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT];
+// Whether DrawCapturePass composited this frame's capture into the texture as well
+static bool s_HiResCaptureDrawn;
+// The BG that this DrawEngine call shows the texture on, or -1
+static int s_HiResCaptureLayer = -1;
+static int FindHiResCaptureLayer(u32 dispcnt, s16 matrix[4], s32 *x, s32 *y);
 
 static u32 s_TouchPanelCoords[4] = {}; // The bounding box of the touch screen
 
@@ -916,6 +937,11 @@ void *SIM_RenderInit(void *arg) {
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
+  // The game draws its 3D into the back target from the first frame on
+  s3DTarget.Resize(s_MaxViewWidth * s_SIM_config.internalResolutionScale,
+      SIM_NDS_SCREEN_HEIGHT * 2 * s_SIM_config.internalResolutionScale, sAntialiasRequested);
+  sAntialiasApplied = sAntialiasRequested;
+
   glBindTexture(GL_TEXTURE_2D, g2TextureId);
 
   glGenFramebuffers(1, &g2FrameBuffer);
@@ -983,8 +1009,19 @@ void *SIM_RenderInit(void *arg) {
   // Set up the texture units in the shader
   glUniform1iv(glGetUniformLocation(g2shaderProgramID, "bgTexture"), 4,
                s_bgTexUnits);
-  glUniform1iv(glGetUniformLocation(g2shaderProgramID, "objTexture"), 5,
+  glUniform1iv(glGetUniformLocation(g2shaderProgramID, "objTexture"), 4,
                s_objTexUnits);
+  glGenTextures(1, &s_VramDisplayTexture);
+  glActiveTexture(GL_TEXTURE0 + s_VramDisplayTexUnit);
+  glBindTexture(GL_TEXTURE_2D, s_VramDisplayTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT, 0, GL_RGBA,
+               GL_UNSIGNED_SHORT_1_5_5_5_REV, NULL);
+  glActiveTexture(GL_TEXTURE0);
+  glUniform1i(glGetUniformLocation(g2shaderProgramID, "vramTexture"), s_VramDisplayTexUnit);
+  glUniform1i(glGetUniformLocation(g2shaderProgramID, "hiResCaptureTexture"), s_VramDisplayTexUnit);
+  glUniform1i(glGetUniformLocation(g2shaderProgramID, "hiResCaptureLayer"), -1);
 
   glGenVertexArrays(1, &g2vertexArray);
   glBindVertexArray(g2vertexArray);
@@ -1004,6 +1041,106 @@ void *SIM_RenderInit(void *arg) {
   return nullptr;
 }
 
+// Whether this frame's display capture reads the main engine's 2D and 3D, rather than the 3D alone or VRAM alone
+static bool CaptureReads2D3D() {
+  const u32 cnt = s_reg_GX_DISPCAPCNT;
+  const u32 mode = (cnt >> 29) & 3;
+  return (cnt & REG_GX_DISPCAPCNT_E_MASK) && mode != 1 && !(cnt & (1 << 24));
+}
+
+static void EnsureCaptureTarget() {
+  if (s_CaptureFramebuffer != 0) return;
+  GLint texture, framebuffer;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+  glGenTextures(1, &s_CaptureTexture);
+  glBindTexture(GL_TEXTURE_2D, s_CaptureTexture);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, NULL);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glGenFramebuffers(1, &s_CaptureFramebuffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_CaptureFramebuffer);
+  glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_CaptureTexture, 0);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+}
+
+// The internal resolution's capture target, at the current scale
+static void EnsureHiResCaptureTarget() {
+  const u32 scale = s_SIM_config.internalResolutionScale;
+  if (s_HiResCaptureFramebuffer != 0 && s_HiResCaptureTargetScale == scale) return;
+  GLint texture, framebuffer;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+  if (s_HiResCaptureTexture == 0) glGenTextures(1, &s_HiResCaptureTexture);
+  glBindTexture(GL_TEXTURE_2D, s_HiResCaptureTexture);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, SIM_NDS_SCREEN_WIDTH * scale, SIM_NDS_SCREEN_HEIGHT * scale, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  if (s_HiResCaptureFramebuffer == 0) glGenFramebuffers(1, &s_HiResCaptureFramebuffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_HiResCaptureFramebuffer);
+  glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_HiResCaptureTexture, 0);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+  s_HiResCaptureTargetScale = scale;
+  s_HiResCaptureValid = false;
+}
+
+// Composites the main engine, with the uniforms DrawEngine set, into the capture's target at the DS's size and
+// before master brightness, as the DS's capture unit sees it, and at the internal resolution into its own target
+static void DrawCapturePass(bool topScreen) {
+  EnsureCaptureTarget();
+  const u32 scale = s_SIM_config.internalResolutionScale;
+  if (scale > 1) EnsureHiResCaptureTarget();
+  GLint viewport[4];
+  GLint framebuffer;
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+  const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+  glDisable(GL_BLEND);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_CaptureFramebuffer);
+  glViewport(0, 0, SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "capturePass"), TRUE);
+  // The pass may draw into the internal resolution's capture, so it doesn't sample it
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureLayer"), -1);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "singleScreen"), FALSE);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageValid"), FALSE);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"), 256.0f);
+  // The screen's half of the two-screen texture coordinates, its first line at the top of the target
+  const float t0 = topScreen ? 0.5f : 0.0f;
+  G3SIM_Vertex_t quad[6] = {};
+  const float corners[6][4] = {{-1, -1, 0, t0}, {1, -1, 1, t0}, {1, 1, 1, t0 + 0.5f},
+                               {-1, -1, 0, t0}, {1, 1, 1, t0 + 0.5f}, {-1, 1, 0, t0 + 0.5f}};
+  for (int i = 0; i < 6; i++) {
+    quad[i].x = corners[i][0];
+    quad[i].y = corners[i][1];
+    quad[i].s = corners[i][2];
+    quad[i].t = corners[i][3];
+  }
+  glBindVertexArray(g2vertexArray);
+  glBindBuffer(GL_ARRAY_BUFFER, g2vertexBuffer);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STREAM_DRAW);
+  glEnableVertexAttribArray(0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void *)offsetof(G3SIM_Vertex_t, x));
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(G3SIM_Vertex_t), (void *)offsetof(G3SIM_Vertex_t, s));
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  if (scale > 1) {
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_HiResCaptureFramebuffer);
+    glViewport(0, 0, SIM_NDS_SCREEN_WIDTH * scale, SIM_NDS_SCREEN_HEIGHT * scale);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    s_HiResCaptureDrawn = true;
+  }
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "capturePass"), FALSE);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureLayer"),
+                     s_HiResCaptureLayer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+  glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+  if (blendEnabled) glEnable(GL_BLEND);
+}
+
 static void DrawEngine(BOOL isSub) {
   const char *zoneName;
   zoneName = isSub ? "DrawEngine (SUB)" : "DrawEngine (MAIN)";
@@ -1021,13 +1158,44 @@ static void DrawEngine(BOOL isSub) {
 
   u32 dispSel = s_reg_GX_POWCNT >> 15;
   const bool singleScreen = s_SIM_config.screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY;
-  if (singleScreen && !(dispSel ? !isSub : isSub)) {
+  // A hidden screen is still composited when the display capture reads it
+  const bool hidden = singleScreen && !(dispSel ? !isSub : isSub);
+  const bool capture = !isSub && CaptureReads2D3D();
+  if (hidden && !capture) {
     return;
   }
 
   // Get the enabled BGs
   u32 dispcnt = isSub ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT;
+  // DISPCNT's display mode 2 shows a VRAM bank (the sub engine has no such mode); the off and main memory modes
+  // still show the layers
+  const bool vramDisplay = !isSub && ((dispcnt >> 16) & 3) == 2;
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "vramDisplay"), vramDisplay);
+  if (vramDisplay) {
+    glActiveTexture(GL_TEXTURE0 + s_VramDisplayTexUnit);
+    glBindTexture(GL_TEXTURE_2D, s_VramDisplayTexture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT, GL_RGBA,
+                    GL_UNSIGNED_SHORT_1_5_5_5_REV, SIM_VRAM_GetBankMemory((dispcnt >> 18) & 3));
+  }
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "dispcnt"), dispcnt);
+  {
+    s16 matrix[4];
+    s32 x, y;
+    s_HiResCaptureLayer = isSub || vramDisplay ? -1 : FindHiResCaptureLayer(dispcnt, matrix, &x, &y);
+    if (s_HiResCaptureLayer >= 0) {
+      // On the VRAM display's unit, which samples nothing outside that mode
+      glActiveTexture(GL_TEXTURE0 + s_VramDisplayTexUnit);
+      glBindTexture(GL_TEXTURE_2D, s_HiResCaptureTexture);
+      glProgramUniform4f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureMatrix"),
+                         matrix[0] / 256.0f, matrix[1] / 256.0f, matrix[2] / 256.0f, matrix[3] / 256.0f);
+      glProgramUniform2f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureOrigin"),
+                         x / 256.0f, y / 256.0f);
+      glProgramUniform2f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureSize"),
+                         (float)s_HiResCaptureWidth, (float)s_HiResCaptureHeight);
+    }
+    glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "hiResCaptureLayer"),
+                       s_HiResCaptureLayer);
+  }
 
   bgEnabled[0] = (dispcnt >> 8) & 0x01;
   bg0as3d = !isSub && ((dispcnt >> 3) & 0x01);
@@ -1389,7 +1557,7 @@ static void DrawEngine(BOOL isSub) {
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageValid"), averageSides);
   glBindVertexArray(g2vertexArray);
   glBindBuffer(GL_ARRAY_BUFFER, g2vertexBuffer);
-  if (averageSides) {
+  if (averageSides && !hidden) {
     GLint viewport[4];
     GLint framebuffer;
     glGetIntegerv(GL_VIEWPORT, viewport);
@@ -1415,7 +1583,12 @@ static void DrawEngine(BOOL isSub) {
     glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "presentationWidth"),
                        s_BorderPresentationWidth);
   }
-  DrawScreenQuad();
+  if (!hidden) {
+    DrawScreenQuad();
+  }
+  if (capture) {
+    DrawCapturePass(topScreen);
+  }
 
   // Clear out the textures
   for (int i = 0; i < 4; i++) {
@@ -1567,6 +1740,125 @@ u32 SIM_SetFieldWidescreen(BOOL enabled) {
 extern "C" void SIM_Autopilot_Frame(void);
 extern "C" void SIM_Autopilot_BeforeSwap(int width, int height);
 
+// The display capture (DISPCAPCNT) of the main screen into a VRAM bank, once per enable as on the DS. Source A is
+// the 3D layer, sampled at the DS's resolution from the internal one, or the main engine's 2D and 3D, which
+// DrawEngine composited into the capture's target before this
+static void CaptureDisplay() {
+  const u32 cnt = s_reg_GX_DISPCAPCNT;
+  if (!(cnt & REG_GX_DISPCAPCNT_E_MASK)) return;
+
+  static const u32 widths[4] = {128, 256, 256, 256};
+  static const u32 heights[4] = {128, 64, 128, 192};
+  const u32 size = (cnt >> 20) & 3;
+  const u32 width = widths[size];
+  const u32 height = heights[size];
+  const u32 eva = std::min<u32>(cnt & 0x1f, 16);
+  const u32 evb = std::min<u32>((cnt >> 8) & 0x1f, 16);
+  const u32 mode = (cnt >> 29) & 3;
+  const u32 scale = s_SIM_config.internalResolutionScale;
+  static u8 pixels[SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 4];
+
+  GLint readFramebuffer, drawFramebuffer;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer);
+  EnsureCaptureTarget();
+  if (!CaptureReads2D3D()) {
+    // The main screen's 3D, where Set3DViewport puts it
+    const GLint x0 = (s_MaxViewWidth - SIM_NDS_SCREEN_WIDTH) / 2 * scale;
+    const GLint y0 = (s_reg_GX_POWCNT >> 15) ? SIM_NDS_SCREEN_HEIGHT * scale : 0;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, g3FrameBuffer);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_CaptureFramebuffer);
+    glBlitFramebuffer(x0, y0, x0 + SIM_NDS_SCREEN_WIDTH * scale, y0 + SIM_NDS_SCREEN_HEIGHT * scale, 0, 0,
+                      SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (scale > 1) {
+      EnsureHiResCaptureTarget();
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_HiResCaptureFramebuffer);
+      glBlitFramebuffer(x0, y0, x0 + SIM_NDS_SCREEN_WIDTH * scale, y0 + SIM_NDS_SCREEN_HEIGHT * scale, 0, 0,
+                        SIM_NDS_SCREEN_WIDTH * scale, SIM_NDS_SCREEN_HEIGHT * scale, GL_COLOR_BUFFER_BIT,
+                        GL_NEAREST);
+      s_HiResCaptureDrawn = true;
+    }
+  }
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, s_CaptureFramebuffer);
+  glReadPixels(0, 0, SIM_NDS_SCREEN_WIDTH, SIM_NDS_SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFramebuffer);
+
+  u8 *dest = SIM_VRAM_GetBankMemory((cnt >> 16) & 3);
+  const u32 writeOffset = ((cnt >> 18) & 3) * 0x8000;
+  // Source B is the VRAM block that DISPCNT selects, at the capture's read offset; the main memory FIFO reads 0
+  const u8 *sourceB = (cnt & (1 << 25)) ? NULL : SIM_VRAM_GetBankMemory((s_reg_GX_DISPCNT >> 18) & 3);
+  const u32 readOffset = ((cnt >> 26) & 3) * 0x8000;
+
+  for (u32 y = 0; y < height; y++) {
+    // The 3D renders upside down in GL's terms, so the screen's first line is the texture's last
+    const u8 *row = pixels + (SIM_NDS_SCREEN_HEIGHT - 1 - y) * SIM_NDS_SCREEN_WIDTH * 4;
+    for (u32 x = 0; x < width; x++) {
+      const u8 *p = row + x * 4;
+      const u16 a = (p[0] >> 3) | ((p[1] >> 3) << 5) | ((p[2] >> 3) << 10) | (p[3] != 0 ? 0x8000 : 0);
+      u16 b = 0;
+      if (sourceB != NULL) {
+        const u32 offset = (readOffset + (y * width + x) * 2) & 0x1ffff;
+        b = sourceB[offset] | (sourceB[offset + 1] << 8);
+      }
+      u16 color;
+      if (mode == 0) {
+        color = a;
+      } else if (mode == 1) {
+        color = b;
+      } else {
+        color = 0;
+        for (u32 shift = 0; shift < 15; shift += 5) {
+          const u32 c = (((a >> shift) & 0x1f) * ((a & 0x8000) ? eva : 0) + ((b >> shift) & 0x1f) * ((b & 0x8000) ? evb : 0) + 8) >> 4;
+          color |= std::min<u32>(c, 31) << shift;
+        }
+        if (((a & 0x8000) && eva) || ((b & 0x8000) && evb)) color |= 0x8000;
+      }
+      const u32 offset = (writeOffset + (y * width + x) * 2) & 0x1ffff;
+      dest[offset] = color & 0xff;
+      dest[offset + 1] = color >> 8;
+    }
+  }
+  // Source A alone, written in one piece, is what the internal resolution's capture holds
+  const u32 bytes = width * height * 2;
+  s_HiResCaptureValid = s_HiResCaptureDrawn && mode == 0 && writeOffset + bytes <= 0x20000;
+  s_HiResCaptureDrawn = false;
+  if (s_HiResCaptureValid) {
+    s_HiResCaptureBank = (cnt >> 16) & 3;
+    s_HiResCaptureOffset = writeOffset;
+    s_HiResCaptureWidth = width;
+    s_HiResCaptureHeight = height;
+    memcpy(s_HiResCapturePixels, dest + writeOffset, bytes);
+  }
+  s_reg_GX_DISPCAPCNT = cnt & ~REG_GX_DISPCAPCNT_E_MASK;
+}
+
+// The BG of the main engine that shows the internal resolution's capture this frame, or -1: a direct-color bitmap BG2
+// or BG3 at the capture's memory, as wide as the capture, without mosaic or wraparound, whose matrix holds over the
+// frame, while that memory still holds what the capture wrote
+static int FindHiResCaptureLayer(u32 dispcnt, s16 matrix[4], s32 *x, s32 *y) {
+  if (!s_HiResCaptureValid || s_HiResCaptureTargetScale != s_SIM_config.internalResolutionScale) return -1;
+  const u32 bgMode = dispcnt & 7;
+  const u8 *capture = SIM_VRAM_GetBankMemory(s_HiResCaptureBank) + s_HiResCaptureOffset;
+  for (int bg = 2; bg < 4; bg++) {
+    const bool extended = bgMode == 5 || (bg == 3 && (bgMode == 3 || bgMode == 4));
+    if (!extended || !((dispcnt >> 8) & (1 << bg))) continue;
+    const u16 bgcnt = bg == 2 ? s_reg_G2_BG2CNT : s_reg_G2_BG3CNT;
+    // Bitmap, direct color, no mosaic, no wraparound
+    if ((bgcnt & 0x84) != 0x84 || (bgcnt & 0x2040)) continue;
+    static const u32 bitmapWidths[4] = {128, 256, 512, 512};
+    if (bitmapWidths[bgcnt >> 14] != s_HiResCaptureWidth) continue;
+    if (s_HW_BG_VRAM + ((bgcnt & 0x1f00) << 6) != capture) continue;
+    if (memcmp(capture, s_HiResCapturePixels, s_HiResCaptureWidth * s_HiResCaptureHeight * 2) != 0) {
+      s_HiResCaptureValid = false;
+      return -1;
+    }
+    if (G2SIM_GetFrameAffine(FALSE, bg, matrix, x, y)) return bg;
+  }
+  return -1;
+}
+
 void *SIM_Render(void *arg) {
 
   SDL_Event Event;
@@ -1581,9 +1873,11 @@ void *SIM_Render(void *arg) {
 
   G3SIM_FlushArray();
 
-  // Draw the translucent 3D stuff
-  G3SIM_DrawItems();
-  s3DTarget.Resolve(g3FrameBuffer);
+  // The swap draws its frame's translucent polygons. Those of a frame that is
+  // still being submitted wait for its swap.
+  if (G3SIM_SwapBuffersCalledThisFrame()) G3SIM_DrawItems();
+  // The displayed 3D is the last frame the game swapped
+  if (G3SIM_SwapBuffersCalledThisFrame()) s3DTarget.Resolve(g3FrameBuffer);
   sFieldCoverageApplied = sFieldCoverageRepair && s_SIM_config.internalResolutionScale == 1
       && !s3DTarget.Enabled() && sFieldCoverage.Ready();
   if (sFieldCoverageApplied) sFieldCoverage.Run(g3RenderTextureId, g3FogTextureId);
@@ -1990,6 +2284,8 @@ void *SIM_Render(void *arg) {
 
     // Draw MAIN engine
     DrawEngine(FALSE);
+    // The capture writes VRAM after the main screen has shown it, as the DS's does while it scans the frame out
+    CaptureDisplay();
 
     // SUB engine
     DrawEngine(TRUE);
@@ -2123,16 +2419,35 @@ u64 SIM_GetFullFrameTime() {
 
 void SIM_PreRenderVBlank() { SDL_SemPost(vcountVblankSemaphore); }
 
+// Whether the 3D framebuffer still holds the frame that the last swap displayed, and is cleared before the next 3D
+// frame draws into it
+static bool s_g3ClearPending;
+
+// Starts the next 3D frame with the rear plane: G3X_SetClearColor's color and alpha, which a game that draws a scene
+// smaller than the screen (an indoor map) shows around it
+extern "C" void SIM_G3BeginFrame(void) {
+  if (!s_g3ClearPending) {
+    return;
+  }
+  s_g3ClearPending = false;
+  const u32 clearColor = s_reg_G3X_CLEAR_COLOR;
+  glClearColor((float)(clearColor & 31) / 31.0f, (float)((clearColor >> 5) & 31) / 31.0f,
+               (float)((clearColor >> 10) & 31) / 31.0f, (float)((clearColor >> 16) & 31) / 31.0f);
+  glStencilMask(0xff);
+  glClearStencil(0);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
 void SIM_PostRenderVBlank() {
+  // The DS shows the last swapped 3D frame until the next swap, and a game whose 3D runs at 30 fps swaps every other
+  // frame. So the frame stays in the framebuffer, which the next 3D frame clears when it starts to draw
   if (G3SIM_SwapBuffersCalledThisFrame()) {
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glStencilMask(0xff);
-    glClearStencil(0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    s_g3ClearPending = true;
     G3SIM_ResetSwapBuffersCall();
   }
-  // Reset Vcount
-  s_reg_GX_VCOUNT = 0;
+  // The game's VBlank work runs after this, which on the DS is in the VBlank's first lines: tasks that load VRAM
+  // wait for a VCOUNT there (MCSS's sprites need 192 to 200), and a VCOUNT of 0 kept them waiting forever
+  s_reg_GX_VCOUNT = SIM_NDS_SCREEN_HEIGHT + 1;
   SDL_SemPost(vcountResetSemaphore);
 }
 

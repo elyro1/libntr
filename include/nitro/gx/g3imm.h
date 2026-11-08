@@ -293,6 +293,19 @@ static inline void G3_TexCoord (fx32 s, fx32 t)
     #endif
 }
 
+#ifdef SDK_PORT
+// The simulator's registers are variables that its 3D never reads: a game that writes a packed coordinate to
+// reg_G3_TEXCOORD itself, as the DS allows, sends it with this instead
+static inline void G3i_TexCoordPacked (u32 st)
+{
+    draw_msg_t msg;
+
+    msg.type = DRAW_CMD_G3_TEXCOORD;
+    msg.data.numU32 = st;
+    SIM_HandleG3Command( &msg );
+}
+#endif
+
 static inline void G3_Vtx (fx16 x, fx16 y, fx16 z)
 {
     #ifdef SDK_PORT

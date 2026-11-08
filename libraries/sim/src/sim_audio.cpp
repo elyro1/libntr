@@ -93,6 +93,20 @@ static double s_channelCycleFraction[16] = {};
 // OS ticks use a /64 CPU clock; channel clocks use /2.
 static constexpr double s_soundTickCycles = SND_PROC_INTERVAL * 32.0;
 static double s_tickRemaining[2] = {};
+// Each channel's cycles: counted in the callback, published at its end
+static u64 s_channelCycles[16] = {};
+static std::atomic<u64> s_channelClock[16] = {};
+static std::atomic<bool> s_audioRunning{false};
+
+u64 SIM_Audio_GetChannelClock(int chNo)
+{
+    return s_channelClock[chNo].load(std::memory_order_acquire);
+}
+
+BOOL SIM_Audio_IsRunning(void)
+{
+    return s_audioRunning.load(std::memory_order_acquire);
+}
 
 // Effects are synthesized at their original pitch on the accelerated clock.
 // SoundTouch shortens that separate stream before it is mixed with normal music.
@@ -233,6 +247,7 @@ void SIM_Audio_Init(int aAudioFrequency)
     if(SDL_OpenAudio(&s_requestedAudioSpec, NULL) < 0) {
         printf("SDL Error %s\n", SDL_GetError());
     } else {
+        s_audioRunning.store(true, std::memory_order_release);
         // Stop and join the callback before C++ static destruction. Otherwise
         // it can read s_effectTempo after SoundTouch has freed its FIFOs.
         std::atexit([] { SDL_CloseAudio(); });
@@ -288,6 +303,7 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
                                          + s_channelCycleFraction[chNo];
             const u32 wholeCycles = (u32)channelCycles;
             s_channelCycleFraction[chNo] = channelCycles - wholeCycles;
+            s_channelCycles[chNo] += wholeCycles;
             const s32 sample = SIM_Audio_RunChannel(wholeCycles, chNo);
             if (s_channelFastForward[chNo])
                 PanOutput(sample, &effectLeft, &effectRight, chNo);
@@ -326,6 +342,9 @@ void SIM_Audio_Callback(void *userdata, Uint8 *stream, int len)
             FeedEffectAudio();
         }
     }
+
+    for (int channel = 0; channel < 16; ++channel)
+        s_channelClock[channel].store(s_channelCycles[channel], std::memory_order_release);
 
     if (SNDi_SharedWork) {
         u16 channelStatus = 0;

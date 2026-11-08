@@ -9,7 +9,19 @@ uniform float bloomStrength;
 uniform float g3FogAlpha;
 uniform bool g3FogAlphaOnly;
 uniform sampler2D bgTexture[4];
-uniform sampler2D objTexture[5]; //The extra element is for OBJs drawn on top of all BGs
+uniform sampler2D objTexture[4];
+// DISPCNT's VRAM display mode: the main screen shows a VRAM bank's 256x192 bitmap instead of its layers
+uniform bool vramDisplay;
+uniform sampler2D vramTexture;
+// The display capture's pass: the main engine at the DS's size, before master brightness
+uniform bool capturePass;
+// The display capture at the internal resolution, which this BG (or -1) shows through its affine matrix (PA, PB, PC,
+// PD), line 0's reference and the capture's size, in DS pixels
+uniform sampler2D hiResCaptureTexture;
+uniform int hiResCaptureLayer;
+uniform vec4 hiResCaptureMatrix;
+uniform vec2 hiResCaptureOrigin;
+uniform vec2 hiResCaptureSize;
 uniform sampler2D objWindowTexture;
 int bgOrder[4];
 int bgPriorities[4];
@@ -78,12 +90,27 @@ vec4 sampleBg(int layer) {
         return texture(bgTexture[layer], uiCoord);
     }
     if ((windowMask & (1 << layer)) == 0) return vec4(0.0);
+    if (layer == hiResCaptureLayer) {
+        // The DS samples pixel x of line y at the reference plus (PA, PC) x plus (PB, PD) y; this is that mapping
+        // at the fragment's position, from pixel centers to texel centers
+        vec2 screen = vec2(uiCoord.x * 256.0, ((topScreen == 1 ? 1.0 : 0.5) - uiCoord.y) * 384.0) - 0.5;
+        vec2 source = hiResCaptureOrigin + 0.5
+            + vec2(dot(hiResCaptureMatrix.xy, screen), dot(hiResCaptureMatrix.zw, screen));
+        // Elsewhere the bitmap holds what the capture didn't write
+        if (all(greaterThanEqual(source, vec2(0.0))) && all(lessThan(source, hiResCaptureSize))) {
+            vec4 texel = texture(hiResCaptureTexture, vec2(source.x / 256.0, 1.0 - source.y / 192.0));
+            return texel.a > 0.0 ? vec4(texel.rgb, 1.0) : vec4(0.0);
+        }
+    }
     if (layer == fieldTransitionMask) {
         // A screen-covering wipe uses the whole viewport, independently of
         // the native UI and the wider 3D world beneath its transparent dots.
         return texture(bgTexture[layer], fragTexCoord);
     }
     if (layer == 0 && bg0as3d != 0) {
+        // The fog and bloom textures stay bound while BG0 is off, and their coverage would show it anyway: the
+        // building entrance zooms the captured screen on BG2 with BG0 off while the new map's 3D draws
+        if ((dispcnt & (1 << 8)) == 0) return vec4(0.0);
         vec4 scene = texture(bgTexture[layer], worldCoord);
         // Rendering into transparent black stores premultiplied RGB. Recover
         // the source color before applying fog and DS background blending.
@@ -198,6 +225,11 @@ void main()
     bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner;
     if (filler) {
         color = sideBackground();
+    } else if (vramDisplay && !capturePass) {
+        // The bitmap has the DS's width; the sides of a wide field view are black
+        int line = clamp(int(floor(((topScreen == 1 ? 1.0 : 0.5) - fragTexCoord.y) * 384.0)), 0, 191);
+        color = outside ? vec4(0.0, 0.0, 0.0, 1.0)
+                        : vec4(texelFetch(vramTexture, ivec2(int(floor(uiCoord.x * 256.0)), line), 0).rgb, 1.0);
     } else {
     for(int i=0; i<4; i++) {
         int bgNum = bgOrder[i];
@@ -293,7 +325,7 @@ void main()
     
     } // End scene composition; master brightness also affects the filler.
     // Reduce the pre-fade color; presentation applies master brightness once.
-    if (averagePass) {
+    if (averagePass || capturePass) {
         color.a = 1.0;
         return;
     }

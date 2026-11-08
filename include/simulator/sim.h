@@ -47,7 +47,11 @@ typedef struct WIN_snd_alarm_info {
 	u32 period;
 	u32 id;
 	pthread_t thread;
-	u8 isRunning;
+	volatile u8 isRunning;
+	// The channel whose clock the alarm counts on (SIM_Audio_GetChannelClock), or -1 for the host's clock
+	int channel;
+	// That clock when the alarm started
+	u64 startClock;
 } WIN_snd_alarm_info;
 
 #ifdef __cplusplus
@@ -55,6 +59,10 @@ extern "C" {
 #endif
 
 void SIM_PreRenderVBlank(void);
+// The VRAM banks' memory follows their mapping: called after the VRAMCNT registers change (gx_vramcnt.c)
+void SIM_VRAM_SyncBanks(void);
+// Where bank 0 (A) to 8 (I) is now: its LCDC memory, or the BG or OBJ VRAM it is mapped to
+u8 *SIM_VRAM_GetBankMemory(int bank);
 void SIM_PostRenderVBlank(void);
 void SIM_procPXI(void);
 void SIM_procPXI7to9(void);
@@ -114,6 +122,7 @@ void SIM_SetFieldSurface(BOOL surface);
 void SIM_SetFieldGrade(const float shadows[3], const float highlights[3], float exposure, float saturation, float contrast);
 int SIM_runNitroOSThread(void * thread);
 void * SIM_sndAlarm(void * arg);
+u64 SIM_sndAlarmClock(const WIN_snd_alarm_info * sndAlarmInfo);
 void SIM_u16ToRGB( u16 in, u8 * r, u8 *g, u8 * b );
 SIM_config_type * SIM_GetConfigPtr();
 // Field rendering opts in each logic frame; all other scenes use 4:3.

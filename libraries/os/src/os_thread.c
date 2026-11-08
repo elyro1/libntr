@@ -1073,7 +1073,9 @@ void OS_WakeupThreadDirect (OSThread * thread)
         thread->state = OS_THREAD_STATE_READY;
         OSi_RescheduleThread();
         #ifdef SDK_PORT
-        while(thread->win_threadState == 0){
+        // Only a thread that OS_CreateThread made has a host thread to wait for; waking one that was never created
+        // does nothing, as on the DS
+        while(thread->win_sdlThread != NULL && thread->win_threadState == 0){
             SDL_Delay(1);
         }
         #endif

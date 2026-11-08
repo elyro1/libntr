@@ -1,7 +1,9 @@
 #include <nitro/os/common/arena.h>
 #include <nitro/spi/ARM9/tp.h>
+#include <string.h>
 
-u32 SDK_AUTOLOAD_DTCM_START[2];
+// The simulator's DTCM, all 16 KB of it, since the DTCM arena is in it
+u32 SDK_AUTOLOAD_DTCM_START[0x4000 / sizeof(u32)];
 
 //ioreg_CP
 REGType16v s_reg_CP_DIVCNT;
@@ -280,12 +282,14 @@ u8 s_HW_MAIN_MEM_SUB[0x400000];
 
 //mmap_global
 u8 s_HW_MAIN_MEM[0x800000];
+#if defined(SDK_TWL)
+u8 s_HW_MAIN_MEM_PARAMETER_BUF[0x4000];
+#endif
 u8 s_HW_MAIN_MEM_EX[0x800000];
-u8 s_HW_BG_PLTT[0x200];
-// The main OBJ palettes, then a second set for the OAM entries of the OBJ extension (SIM_SetObjExtension)
-u8 s_HW_OBJ_PLTT[0x400];
-u8 s_HW_DB_BG_PLTT[0x200];
-u8 s_HW_DB_OBJ_PLTT[0x200];
+// The main BG and OBJ palettes, the OBJ ones followed by a second set for the OAM entries of the OBJ extension
+// (SIM_SetObjExtension), and the sub engine's
+SIMPlttMain s_HW_PLTT_MAIN;
+SIMPlttSub s_HW_PLTT_SUB;
 u8 s_HW_BG_VRAM[0x80000];
 u8 s_HW_DB_BG_VRAM[0x20000];
 u8 s_HW_OBJ_VRAM[0x40000];
@@ -314,3 +318,102 @@ u8 s_HW_WIRELESS_INTF1[0x8000];
 u8 s_HW_TWL_MAIN_MEM[0x01000000];
 u8 s_HW_TWL_MAIN_MEM_EX[0x01000000];
 #endif
+
+// libntr keeps the BG and OBJ VRAM of each engine in arrays of their own, and every bank at its LCDC address, where
+// the 3D reads its textures and palettes. On the DS a bank's memory goes with the bank, so when a bank is mapped to a
+// 2D engine its memory moves into that engine's array at the bank's offset, and back to the LCDC address when it is
+// mapped elsewhere; the region it leaves reads 0, as unmapped VRAM does
+static const u32 s_SIM_vramBankHome[9] = { 0x00000, 0x20000, 0x40000, 0x60000, 0x80000, 0x90000, 0x94000, 0x98000, 0xa0000 };
+static const u32 s_SIM_vramBankSize[9] = { 0x20000, 0x20000, 0x20000, 0x20000, 0x10000, 0x4000, 0x4000, 0x8000, 0x4000 };
+static u8 s_SIM_vramBankCnt[9];
+
+static volatile u8 *SIM_VRAM_BankCnt(int bank)
+{
+    switch (bank) {
+    case 0: return &s_reg_GX_VRAMCNT_A;
+    case 1: return &s_reg_GX_VRAMCNT_B;
+    case 2: return &s_reg_GX_VRAMCNT_C;
+    case 3: return &s_reg_GX_VRAMCNT_D;
+    case 4: return &s_reg_GX_VRAMCNT_E;
+    case 5: return &s_reg_GX_VRAMCNT_F;
+    case 6: return &s_reg_GX_VRAMCNT_G;
+    case 7: return &s_reg_GX_VRAMCNT_H;
+    default: return &s_reg_GX_VRAMCNT_I;
+    }
+}
+
+// The 2D memory that a bank with this VRAMCNT value is mapped to, or NULL for its LCDC address
+static u8 *SIM_VRAM_BankTarget(int bank, u8 cnt)
+{
+    const u32 mst = cnt & 7;
+    const u32 ofs = (cnt >> 3) & 3;
+    u8 *base = NULL;
+    u32 offset = 0, limit = 0;
+
+    if (!(cnt & 0x80)) return NULL;
+    switch (bank) {
+    case 0:
+    case 1:
+        if (mst == 1) { base = s_HW_BG_VRAM; offset = ofs * 0x20000; limit = sizeof(s_HW_BG_VRAM); }
+        else if (mst == 2) { base = s_HW_OBJ_VRAM; offset = (ofs & 1) * 0x20000; limit = sizeof(s_HW_OBJ_VRAM); }
+        break;
+    case 2:
+        if (mst == 1) { base = s_HW_BG_VRAM; offset = ofs * 0x20000; limit = sizeof(s_HW_BG_VRAM); }
+        else if (mst == 4) { base = s_HW_DB_BG_VRAM; limit = sizeof(s_HW_DB_BG_VRAM); }
+        break;
+    case 3:
+        if (mst == 1) { base = s_HW_BG_VRAM; offset = ofs * 0x20000; limit = sizeof(s_HW_BG_VRAM); }
+        else if (mst == 4) { base = s_HW_DB_OBJ_VRAM; limit = sizeof(s_HW_DB_OBJ_VRAM); }
+        break;
+    case 4:
+        if (mst == 1) { base = s_HW_BG_VRAM; limit = sizeof(s_HW_BG_VRAM); }
+        else if (mst == 2) { base = s_HW_OBJ_VRAM; limit = sizeof(s_HW_OBJ_VRAM); }
+        break;
+    case 5:
+    case 6:
+        offset = (ofs & 1) * 0x4000 + (ofs >> 1) * 0x10000;
+        if (mst == 1) { base = s_HW_BG_VRAM; limit = sizeof(s_HW_BG_VRAM); }
+        else if (mst == 2) { base = s_HW_OBJ_VRAM; limit = sizeof(s_HW_OBJ_VRAM); }
+        break;
+    case 7:
+        if (mst == 1) { base = s_HW_DB_BG_VRAM; limit = sizeof(s_HW_DB_BG_VRAM); }
+        break;
+    default:
+        if (mst == 1) { base = s_HW_DB_BG_VRAM; offset = 0x8000; limit = sizeof(s_HW_DB_BG_VRAM); }
+        else if (mst == 2) { base = s_HW_DB_OBJ_VRAM; limit = sizeof(s_HW_DB_OBJ_VRAM); }
+        break;
+    }
+    if (base == NULL || offset + s_SIM_vramBankSize[bank] > limit) return NULL;
+    return base + offset;
+}
+
+void SIM_VRAM_SyncBanks(void)
+{
+    u8 next[9];
+    int bank;
+
+    for (bank = 0; bank < 9; bank++) next[bank] = *SIM_VRAM_BankCnt(bank);
+    // Every bank leaves its old place before any bank arrives, so that two banks can trade places
+    for (bank = 0; bank < 9; bank++) {
+        u8 *from = SIM_VRAM_BankTarget(bank, s_SIM_vramBankCnt[bank]);
+
+        if (next[bank] == s_SIM_vramBankCnt[bank] || from == NULL || from == SIM_VRAM_BankTarget(bank, next[bank]))
+            continue;
+        memcpy(s_HW_LCDC_VRAM + s_SIM_vramBankHome[bank], from, s_SIM_vramBankSize[bank]);
+        memset(from, 0, s_SIM_vramBankSize[bank]);
+    }
+    for (bank = 0; bank < 9; bank++) {
+        u8 *to = SIM_VRAM_BankTarget(bank, next[bank]);
+
+        if (next[bank] != s_SIM_vramBankCnt[bank] && to != NULL && to != SIM_VRAM_BankTarget(bank, s_SIM_vramBankCnt[bank]))
+            memcpy(to, s_HW_LCDC_VRAM + s_SIM_vramBankHome[bank], s_SIM_vramBankSize[bank]);
+        s_SIM_vramBankCnt[bank] = next[bank];
+    }
+}
+
+u8 *SIM_VRAM_GetBankMemory(int bank)
+{
+    u8 *target = SIM_VRAM_BankTarget(bank, s_SIM_vramBankCnt[bank]);
+
+    return target != NULL ? target : s_HW_LCDC_VRAM + s_SIM_vramBankHome[bank];
+}

@@ -51,6 +51,13 @@ extern u8 SDK_LTDOVERLAYTABLE_DIGEST[];
 #endif
 
 #if SDK_VERSION_MAJOR == 5
+#if defined(SDK_PORT)
+// A DS build's linker script gives the overlay counts as symbols' addresses; a port's game defines them
+extern const u32 SDKi_PortOverlayNumber;
+extern const u32 SDKi_PortLtdOverlayNumber;
+#define FS_OVERLAY_NTR_TOTAL SDKi_PortOverlayNumber
+#define FS_OVERLAY_TWL_TOTAL SDKi_PortLtdOverlayNumber
+#else
 extern u8 SDK_OVERLAY_NUMBER[];
 #ifdef SDK_TWL
 extern u8 SDK_LTDOVERLAY_NUMBER[];
@@ -59,6 +66,7 @@ extern u8 SDK_LTDOVERLAY_NUMBER[];
 #endif // SDK_TWL
 #define FS_OVERLAY_NTR_TOTAL (u32) SDK_OVERLAY_NUMBER
 #define FS_OVERLAY_TWL_TOTAL (u32) SDK_LTDOVERLAY_NUMBER
+#endif // SDK_PORT
 
 #define FSi_RegisterOverlayToDebugger(ovi) (void)0
 #define FSi_UnregisterOverlayToDebugger(ovi) (void)0

@@ -11,6 +11,8 @@ extern "C" {
 
 #ifndef SDK_ASM
 #include <nitro/types.h>
+// The palettes' block and its names (nitro/hw/X86/mmap_global.h)
+#include <nitro/hw/X86/mmap_global.h>
 extern u32 SDK_AUTOLOAD_DTCM_START[];
 #ifdef SDK_PORT
 #define HW_DTCM ((u64)SDK_AUTOLOAD_DTCM_START)
@@ -99,22 +101,18 @@ extern u8 s_HW_TWL_MAIN_MEM_EX[0x01000000];
 #define HW_IOREG_END 0x05000000
 #define HW_REG_BASE HW_IOREG // alias
 
-extern u8 s_HW_BG_PLTT[0x200];
 #define HW_BG_PLTT              ((u64)s_HW_BG_PLTT)
 #define HW_BG_PLTT_END          ((u64)s_HW_BG_PLTT + 0x200)
 #define HW_BG_PLTT_SIZE (HW_BG_PLTT_END - HW_BG_PLTT)
-extern u8 s_HW_OBJ_PLTT[0x400];
 #define HW_OBJ_PLTT             ((u64)s_HW_OBJ_PLTT)
 #define HW_OBJ_PLTT_END         ((u64)s_HW_OBJ_PLTT + 0x200)
 #define HW_OBJ_PLTT_SIZE        (HW_OBJ_PLTT_END-HW_OBJ_PLTT)
 #define HW_PLTT HW_BG_PLTT
 #define HW_PLTT_END HW_OBJ_PLTT_END
 #define HW_PLTT_SIZE (HW_PLTT_END - HW_PLTT)
-extern u8 s_HW_DB_BG_PLTT[0x200];
 #define HW_DB_BG_PLTT             ((u64)s_HW_DB_BG_PLTT)
 #define HW_DB_BG_PLTT_END         ((u64)s_HW_DB_BG_PLTT + 0x200)
 #define HW_DB_BG_PLTT_SIZE      (HW_DB_BG_PLTT_END-HW_DB_BG_PLTT)
-extern u8 s_HW_DB_OBJ_PLTT[0x200];
 #define HW_DB_OBJ_PLTT            ((u64)s_HW_DB_OBJ_PLTT)
 #define HW_DB_OBJ_PLTT_END        ((u64)s_HW_DB_OBJ_PLTT + 0x200)
 #define HW_DB_OBJ_PLTT_SIZE (HW_DB_OBJ_PLTT_END - HW_DB_OBJ_PLTT)

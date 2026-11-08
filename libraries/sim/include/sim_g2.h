@@ -14,4 +14,7 @@ void G2SIM_PlotPixel(u8 * screenBuf, u8 r, u8 g, u8 b, u32 x, u32 y, BOOL isSub)
 void G2SIM_CaptureScanline(u32 line);
 const u8 *G2SIM_GetWindowMasks(BOOL isSub);
 const u16 *G2SIM_GetScanlineBlend(BOOL isSub);
+// Whether BG2 or BG3 (bg 2 or 3) kept one matrix over the frame's lines, its reference advancing by PB and PD each
+// line with no HBlank change; then its PA to PD and line 0's reference, in the registers' units
+BOOL G2SIM_GetFrameAffine(BOOL isSub, int bg, s16 matrix[4], s32 *x, s32 *y);
 #endif

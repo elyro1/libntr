@@ -73,6 +73,23 @@ static u16 s_ScanlineBlend[2][SIM_NDS_SCREEN_HEIGHT * 2 * 4];
 const u8 *G2SIM_GetWindowMasks(BOOL isSub) { return s_WindowMasks[isSub]; }
 const u16 *G2SIM_GetScanlineBlend(BOOL isSub) { return s_ScanlineBlend[isSub]; }
 
+BOOL G2SIM_GetFrameAffine(BOOL isSub, int bg, s16 matrix[4], s32 *x, s32 *y) {
+  const ScanlineAffine &first = s_ScanlineAffine[isSub][0][bg - 2];
+  for (u32 line = 1; line < SIM_NDS_SCREEN_HEIGHT; line++) {
+    const ScanlineAffine &affine = s_ScanlineAffine[isSub][line][bg - 2];
+    if (affine.a != first.a || affine.b != first.b || affine.c != first.c || affine.d != first.d
+        || affine.x != first.x + first.b * (s32)line || affine.y != first.y + first.d * (s32)line)
+      return FALSE;
+  }
+  matrix[0] = first.a;
+  matrix[1] = first.b;
+  matrix[2] = first.c;
+  matrix[3] = first.d;
+  *x = first.x;
+  *y = first.y;
+  return TRUE;
+}
+
 void G2SIM_CaptureScanline(u32 line) {
   for (int engine = 0; engine < 2; engine++) {
     const SIM_WindowState state = {
@@ -1172,7 +1189,7 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
               u8 r;
               u8 g;
               u8 b;
-              SIM_u16ToRGB(pal[color], &r, &g, &b);
+              SIM_u16ToRGB(color, &r, &g, &b); // a direct color, not a palette index
               G2SIM_PlotPixel(pixelBuf, r, g, b, i, line, isSub);
             }
           }

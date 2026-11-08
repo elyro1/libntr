@@ -33,6 +33,11 @@ BOOL SIM_Audio_IsPlayerFastForward(int playerNo);
 BOOL SIM_Audio_IsChannelFastForward(int chNo);
 
 void SIM_Audio_StartChannel(int chNo);
+// The cycles a channel has run, at SND_TIMER_CLOCK, as of the last audio callback. Sound alarms count on it, so that a
+// stream's refills keep pace with its channel, as the ARM7's timers do on a DS.
+u64 SIM_Audio_GetChannelClock(int chNo);
+// Whether the audio device is open, so that the channel clocks advance
+BOOL SIM_Audio_IsRunning(void);
 
 s32 SIM_Audio_RunChannel(u32 cycles, int chNo);
 

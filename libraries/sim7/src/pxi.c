@@ -193,6 +193,17 @@ void SIM_procPXI(void)
 										}
 									}
 
+									// The alarms count on the clock of the first channel started with them
+									int alarmChannel = -1;
+									for( int i=0; i<SND_CHANNEL_NUM; i++)
+									{
+										if( (sndCommandList->arg[0] >> i) & 1 )
+										{
+											alarmChannel = i;
+											break;
+										}
+									}
+
 									for( int i=0; i<32; i++)
 									{
 										if( (sndCommandList->arg[2] >> i) & 1 )
@@ -205,9 +216,11 @@ void SIM_procPXI(void)
 												pthread_join(win_snd_alarms[i].thread, NULL);
 											}
 
-											
-											pthread_create(  &win_snd_alarms[i].thread, NULL, SIM_sndAlarm, (void *)&win_snd_alarms[i]);
+											win_snd_alarms[i].channel = alarmChannel;
+											win_snd_alarms[i].startClock = SIM_sndAlarmClock(&win_snd_alarms[i]);
+											// Running before the thread starts, which returns when it isn't
 											win_snd_alarms[i].isRunning = 1;
+											pthread_create(  &win_snd_alarms[i].thread, NULL, SIM_sndAlarm, (void *)&win_snd_alarms[i]);
 
 										}
 									}
@@ -444,31 +457,46 @@ void SIM_PostPxi7to9Thread()
 	SDL_SemPost(pxi7to9Semaphore);
 }
 
+// The alarm's clock in cycles of SND_TIMER_CLOCK: its channel's while the audio device runs, otherwise the host's
+u64 SIM_sndAlarmClock(const WIN_snd_alarm_info * sndAlarmInfo)
+{
+	if( sndAlarmInfo->channel >= 0 && SIM_Audio_IsRunning() )
+	{
+		return SIM_Audio_GetChannelClock(sndAlarmInfo->channel);
+	}
+	return (u64)((double)SDL_GetPerformanceCounter() * SND_TIMER_CLOCK / (double)SDL_GetPerformanceFrequency());
+}
+
+// Calls the alarm's handler at its time and then every period, counted from its start on its clock rather than
+// slept: sleeping a period in whole milliseconds made a stream's refills run ahead of its channel (a period of
+// 4096 ticks is 7.8 ms, and slept 7), and the refills overwrote what the channel hadn't played yet.
 void * SIM_sndAlarm(void * arg)
 {
 	WIN_snd_alarm_info * sndAlarmInfo;
 	sndAlarmInfo = (WIN_snd_alarm_info *)arg;
-	u32 timeMs;
-	u32 periodMs;
+	// Alarms are in OS ticks, at a 64th of the CPU's clock, and SND_TIMER_CLOCK is half of it
+	u64 due = (u64)sndAlarmInfo->time * 32;
+	const u64 period = (u64)sndAlarmInfo->period * 32;
 
-	double timeSec = (double)(sndAlarmInfo->time * 32.0f) / (double)SND_TIMER_CLOCK;
-	timeMs = (u32)(timeSec * 1000.0f);
-	double periodSec = (double)(sndAlarmInfo->period * 32.0f) / (double)SND_TIMER_CLOCK;
-	periodMs = (u32)(periodSec * 1000.0f);
-	SDL_Delay( timeMs );
-	SNDi_CallAlarmHandler( sndAlarmInfo->alarmNo | (sndAlarmInfo->id) <<8 );
-
-	if( sndAlarmInfo->period != 0 )
+	while( 1 )
 	{
-		while( 1 )
+		while( SIM_sndAlarmClock(sndAlarmInfo) - sndAlarmInfo->startClock < due )
 		{
 			if( !sndAlarmInfo->isRunning )
 			{
 				return NULL;
 			}
-			SDL_Delay( periodMs );
-			SNDi_CallAlarmHandler( sndAlarmInfo->alarmNo | (sndAlarmInfo->id) <<8 );
+			SDL_Delay( 1 );
 		}
+		if( !sndAlarmInfo->isRunning )
+		{
+			return NULL;
+		}
+		SNDi_CallAlarmHandler( sndAlarmInfo->alarmNo | (sndAlarmInfo->id) <<8 );
+		if( period == 0 )
+		{
+			return NULL;
+		}
+		due += period;
 	}
-
 }

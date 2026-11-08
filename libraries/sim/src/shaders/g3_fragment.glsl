@@ -511,18 +511,14 @@ void main()
             
             fogFactor = fogDensity[0];
         } else {
-            int foundIdx = 31;
+            // The density ramps from each table entry to the next across the step between their boundaries.
+            fogFactor = fogDensity[31];
             for(int i=1; i<32; i++) {
                 if(fogDepth < fogDepthBoundary[i]) {
-                    foundIdx = i;
+                    float position = (fogDepth - fogDepthBoundary[i-1]) / (fogDepthBoundary[i] - fogDepthBoundary[i-1]);
+                    fogFactor = mix(fogDensity[i-1], fogDensity[i], position);
                     break;
                 }
-            }
-            if(foundIdx == 31) {
-                fogFactor = fogDensity[foundIdx];
-            } else {
-                float interpolationFactor = (fogDepthBoundary[foundIdx-1] - fogDepth) / (fogDepthBoundary[foundIdx] - fogDepthBoundary[foundIdx-1]);
-                fogFactor = (fogDensity[foundIdx - 1] * (interpolationFactor)) + (fogDensity[foundIdx] * (1.0-interpolationFactor));
             }
         }
         fogData = vec4(fogColor.rgb, fogFactor);

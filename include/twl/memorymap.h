@@ -11,6 +11,7 @@ extern "C" {
 #include <twl/hw/X86/mmap_main.h>
 #include <twl/hw/X86/mmap_tcm.h>
 #include <twl/hw/X86/mmap_vram.h>
+#include <nitro/hw/X86/mmap_shared.h>
 #include <twl/hw/common/mmap_shared.h>
 #include <twl/hw/common/mmap_parameter.h>
 #include <twl/hw/X86/ioreg.h>

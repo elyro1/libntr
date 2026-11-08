@@ -4,7 +4,14 @@
 #include <twl/os/common/codecmode.h>
 #endif
 
-OSBootType OS_GetBootType(void) { return OS_GetBootInfo()->boot_type; }
+OSBootType OS_GetBootType(void) {
+#if defined(SDK_PORT)
+  // The simulator runs the game as if booted from its card; nothing fills in its boot information
+  return OS_BOOTTYPE_ROM;
+#else
+  return OS_GetBootInfo()->boot_type;
+#endif
+}
 
 const OSBootInfo *OS_GetBootInfo(void) {
   return ((const OSBootInfo *)HW_WM_BOOT_BUF);

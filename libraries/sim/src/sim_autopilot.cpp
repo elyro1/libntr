@@ -3,9 +3,11 @@
 //   <frame> key <SDL key name> <frames held>   e.g. "300 key Z 4", "1700 key Left_Shift 99999"
 //   <frame> shot <file.ppm>                     the window as it is drawn that frame
 //   <frame> quit
+//   <frame> trap                                raises SIGTRAP, so that a debugger stops at that frame
 // Lines starting with # are comments. Frames count the rendered frames from start.
 #include <SDL2/SDL.h>
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -112,6 +114,9 @@ extern "C" void SIM_Autopilot_Frame(void) {
             sHeld.push_back({ key, sFrame + (unsigned long)(cmd.hold > 0 ? cmd.hold : 1) });
         } else if (cmd.kind == "shot") {
             sPendingShot = cmd.arg;
+        } else if (cmd.kind == "trap") {
+            std::fprintf(stderr, "[autopilot] trap at frame %lu\n", sFrame);
+            std::raise(SIGTRAP);
         } else if (cmd.kind == "quit") {
             std::fprintf(stderr, "[autopilot] quit at frame %lu\n", sFrame);
             std::exit(0);

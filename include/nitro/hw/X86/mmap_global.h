@@ -19,7 +19,7 @@ extern "C" {
 #ifndef	SDK_ASM
 #include <nitro/types.h>
 extern u32 SDK_AUTOLOAD_DTCM_START[];
-#define HW_DTCM                 ((u32)SDK_AUTOLOAD_DTCM_START)
+#define HW_DTCM                 ((u64)SDK_AUTOLOAD_DTCM_START)
 #else
 .extern SDK_AUTOLOAD_DTCM_START
 #define HW_DTCM                 SDK_AUTOLOAD_DTCM_START
@@ -49,14 +49,21 @@ extern u8 s_HW_MAIN_MEM_EX[0x800000];
 //#define HW_BG_PLTT              0x05000000
 //#define HW_BG_PLTT_END          0x05000200
 //#define HW_BG_PLTT_SIZE         (HW_BG_PLTT_END-HW_BG_PLTT)
-extern u8 s_HW_BG_PLTT[0x200];
+// Each engine's BG and OBJ palettes are one block, as on the DS, so that a range from HW_PLTT is one range
+typedef struct { u8 bg[0x200]; u8 obj[0x400]; } SIMPlttMain;
+typedef struct { u8 bg[0x200]; u8 obj[0x200]; } SIMPlttSub;
+extern SIMPlttMain s_HW_PLTT_MAIN;
+extern SIMPlttSub s_HW_PLTT_SUB;
+#define s_HW_BG_PLTT (s_HW_PLTT_MAIN.bg)
+#define s_HW_OBJ_PLTT (s_HW_PLTT_MAIN.obj)
+#define s_HW_DB_BG_PLTT (s_HW_PLTT_SUB.bg)
+#define s_HW_DB_OBJ_PLTT (s_HW_PLTT_SUB.obj)
 #define HW_BG_PLTT              ((u64)s_HW_BG_PLTT)
 #define HW_BG_PLTT_END          ((u64)s_HW_BG_PLTT + 0x200)
 #define HW_BG_PLTT_SIZE         (HW_BG_PLTT_END-HW_BG_PLTT)
 //#define HW_OBJ_PLTT             0x05000200
 //#define HW_OBJ_PLTT_END         0x05000400
 //#define HW_OBJ_PLTT_SIZE        (HW_OBJ_PLTT_END-HW_OBJ_PLTT)
-extern u8 s_HW_OBJ_PLTT[0x400];
 #define HW_OBJ_PLTT             ((u64)s_HW_OBJ_PLTT)
 #define HW_OBJ_PLTT_END         ((u64)s_HW_OBJ_PLTT + 0x200)
 // The OBJ extension's palettes (SIM_SetObjExtension), after the main ones
@@ -69,14 +76,12 @@ extern u8 s_HW_OBJ_PLTT[0x400];
 //#define HW_DB_BG_PLTT           0x05000400
 //#define HW_DB_BG_PLTT_END       0x05000600
 //#define HW_DB_BG_PLTT_SIZE      (HW_DB_BG_PLTT_END-HW_DB_BG_PLTT)
-extern u8 s_HW_DB_BG_PLTT[0x200];
 #define HW_DB_BG_PLTT             ((u64)s_HW_DB_BG_PLTT)
 #define HW_DB_BG_PLTT_END         ((u64)s_HW_DB_BG_PLTT + 0x200)
 #define HW_DB_BG_PLTT_SIZE      (HW_DB_BG_PLTT_END-HW_DB_BG_PLTT)
 //#define HW_DB_OBJ_PLTT          0x05000600
 //#define HW_DB_OBJ_PLTT_END      0x05000800
 //#define HW_DB_OBJ_PLTT_SIZE     (HW_DB_OBJ_PLTT_END-HW_DB_OBJ_PLTT)
-extern u8 s_HW_DB_OBJ_PLTT[0x200];
 #define HW_DB_OBJ_PLTT            ((u64)s_HW_DB_OBJ_PLTT)
 #define HW_DB_OBJ_PLTT_END        ((u64)s_HW_DB_OBJ_PLTT + 0x200)
 #define HW_DB_OBJ_PLTT_SIZE     (HW_DB_OBJ_PLTT_END-HW_DB_OBJ_PLTT)
@@ -96,7 +101,7 @@ extern u8 s_HW_BG_VRAM[0x80000];
 extern u8 s_HW_DB_BG_VRAM[0x20000];
 #define HW_DB_BG_VRAM              ((u64)s_HW_DB_BG_VRAM)
 #define HW_DB_BG_VRAM_END          ((u64)s_HW_DB_BG_VRAM + 0x20000)
-#define HW_DB_BG_VRAM_SIZE         (HW_BG_VRAM_END-HW_BG_VRAM)
+#define HW_DB_BG_VRAM_SIZE         (HW_DB_BG_VRAM_END-HW_DB_BG_VRAM)
 
 //#define HW_OBJ_VRAM             0x06400000
 //#define HW_OBJ_VRAM_END         0x06440000
@@ -111,7 +116,7 @@ extern u8 s_HW_DB_OBJ_VRAM[0x20000];
 //#define HW_DB_OBJ_VRAM          0x06600000
 //#define HW_DB_OBJ_VRAM_END      0x06620000
 #define HW_DB_OBJ_VRAM             ((u64)s_HW_DB_OBJ_VRAM)
-#define HW_DB_OBJ_VRAM_END         ((u64)s_HW_DB_OBJ_VRAM + 0x40000)
+#define HW_DB_OBJ_VRAM_END         ((u64)s_HW_DB_OBJ_VRAM + 0x20000)
 #define HW_DB_OBJ_VRAM_SIZE     (HW_DB_OBJ_VRAM_END-HW_DB_OBJ_VRAM)
 //#define HW_LCDC_VRAM            0x06800000
 //#ifdef SDK_TS

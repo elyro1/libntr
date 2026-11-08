@@ -56,7 +56,7 @@ void SDK_SECTION_ARENA_EX_START(void)
 {
 
 }
-#define OSi_MAINEX_ARENA_LO_DEFAULT             ((u32)SDK_SECTION_ARENA_EX_START)
+#define OSi_MAINEX_ARENA_LO_DEFAULT             ((u64)SDK_SECTION_ARENA_EX_START)
 #define OSi_MAINEX_ARENA_HI_DEFAULT             HW_MAIN_MEM_DEBUGGER
 #endif
 
@@ -69,14 +69,14 @@ void SDK_SECTION_ARENA_EX_START(void)
 #endif
 
 #ifdef SDK_PORT
-extern void SDK_SECTION_ARENA_DTCM_START(void);
-#define OSi_DTCM_ARENA_LO_DEFAULT               ((u32)SDK_SECTION_ARENA_DTCM_START)
+// The simulator's DTCM has no autoloaded data, so its arena is all of it
+#define OSi_DTCM_ARENA_LO_DEFAULT               ((u64)HW_DTCM)
 
 void SDK_SECTION_ARENA_ITCM_START(void)
 {
 
 }
-#define OSi_ITCM_ARENA_LO_DEFAULT               ((u32)SDK_SECTION_ARENA_ITCM_START)
+#define OSi_ITCM_ARENA_LO_DEFAULT               ((u64)SDK_SECTION_ARENA_ITCM_START)
 #endif
 
 #define OSi_WRAM_MAIN_ARENA_LO_DEFAULT          HW_WRAM
@@ -96,7 +96,7 @@ void SDK_SECTION_ARENA_ITCM_START(void)
 
 #ifdef SDK_PORT
 extern void SDK_WRAM_ARENA_LO(void);
-#define OSi_WRAM_SUB_ARENA_LO_DEFAULT           ((u32)SDK_WRAM_ARENA_LO)
+#define OSi_WRAM_SUB_ARENA_LO_DEFAULT           ((u64)SDK_WRAM_ARENA_LO)
 #define OSi_WRAM_SUB_ARENA_HI_DEFAULT           HW_WRAM_END
 #endif
 

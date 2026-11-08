@@ -34,7 +34,9 @@ extern "C" {
   (HW_TWL_MAIN_MEM_SHARED_END - HW_TWL_MAIN_MEM_SHARED_SIZE)
 #define HW_TWL_MAIN_MEM_SHARED_END (HW_TWL_MAIN_MEM_END)
 
-#define HW_MAIN_MEM_PARAMETER_BUF 0x02000000
+// The simulator keeps the DSi's parameter buffer, at the DS's 0x02000000, apart from its main memory
+extern u8 s_HW_MAIN_MEM_PARAMETER_BUF[0x4000];
+#define HW_MAIN_MEM_PARAMETER_BUF (u64)(s_HW_MAIN_MEM_PARAMETER_BUF)
 #define HW_MAIN_MEM_PARAMETER_BUF_SIZE 0x4000
 #define HW_MAIN_MEM_PARAMETER_BUF_END                                          \
   (HW_MAIN_MEM_PARAMETER_BUF + HW_MAIN_MEM_PARAMETER_BUF_SIZE)

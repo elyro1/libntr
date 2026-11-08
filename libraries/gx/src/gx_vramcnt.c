@@ -184,6 +184,10 @@ static void GX_VRAMCNT_SetLCDC_ (int lcdc)
 
 	if (lcdc & GX_VRAM_LCDC_I)
 		reg_GX_VRAMCNT_I = (u8)GX_VRAMCNT_I_LCDC_0x068A0000;
+#ifdef SDK_PORT
+	// Every bank change ends here, with the banks that went to LCDC
+	SIM_VRAM_SyncBanks();
+#endif
 }
 
 static inline void GX_VRAMCNT_SetBG_ (GXVRamBG bg)
@@ -1319,6 +1323,9 @@ static int disableBankForX_ (u16 *g3bit)
 	if (rval & GX_VRAM_LCDC_I)
 		reg_GX_VRAMCNT_I = 0;
 
+#ifdef SDK_PORT
+	SIM_VRAM_SyncBanks();
+#endif
 	OSi_UnlockVram((u16)rval, GXi_VRamLockId);
 	return rval;
 }
