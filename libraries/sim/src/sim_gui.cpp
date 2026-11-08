@@ -310,7 +310,7 @@ void OpenFileDialog(std::function<void(std::string)> callback) {
     sFileDialogCallback = callback;
     IGFD::FileDialogConfig config;
     config.path = ".";
-    config.flags |= ImGuiFileDialogFlags_Modal;
+    config.flags |= ImGuiFileDialogFlags_Modal | ImGuiFileDialogFlags_DontShowHiddenFiles;
     ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Select NDS ROM", ".nds,.srl", config);
 }
 

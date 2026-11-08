@@ -3986,6 +3986,15 @@ void IGFD::FileDialog::m_DrawHeader() {
     }
 #endif  // USE_THUMBNAILS
 
+    // Hidden entries are dropped while scanning, so toggling needs a rescan.
+    auto& flags     = m_FileDialogInternal.getDialogConfigRef().flags;
+    bool showHidden = !(flags & ImGuiFileDialogFlags_DontShowHiddenFiles);
+    if (ImGui::Checkbox("Show hidden files##ImGuiFileDialogShowHidden", &showHidden)) {
+        flags ^= ImGuiFileDialogFlags_DontShowHiddenFiles;
+        m_FileDialogInternal.fileManager.OpenCurrentPath(m_FileDialogInternal);
+    }
+    ImGui::SameLine();
+
     m_FileDialogInternal.searchManager.DrawSearchBar(m_FileDialogInternal);
 }
 
