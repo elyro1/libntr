@@ -55,6 +55,12 @@ uniform bool fieldParticlesEnabled;
 // layers in wideBgMask are 512 dots wide, the native screen in their first half.
 uniform bool wideUI;
 uniform int wideBgMask;
+uniform int menuBackgroundLayers;
+uniform int menuBackgroundMode;
+// Matches SIMMenuBackgroundMode in sim.h.
+const int menuBackgroundExtendTopRight = 1;
+const int menuBackgroundExtendLeftEdge = 2;
+const int menuBackgroundPadBorders = 3;
 uniform bool singleScreen;
 uniform sampler2D sideAverageTexture;
 uniform bool sideAverageValid;
@@ -70,6 +76,35 @@ bool insideFieldMoveWindow() {
     float right = fieldMoveWindow.z == 255.0 ? 256.0 : fieldMoveWindow.z;
     return (dispcnt & (1 << 13)) != 0 && x >= fieldMoveWindow.x && x < right
         && y >= fieldMoveWindow.y && y < fieldMoveWindow.w;
+}
+
+float menuBackgroundX(out float coverageX) {
+    coverageX = -1.0;
+    float x = uiCoord.x * 256.0;
+    if (menuBackgroundMode == menuBackgroundPadBorders && presentationWidth > 256.0) {
+        const float leftBorder = 16.0;
+        const float rightBorder = 8.0;
+        const float paperRight = 256.0 - rightBorder;
+        const float strip = 8.0;
+        float viewX = fragTexCoord.x * presentationWidth;
+        float fromRight = presentationWidth - viewX;
+        if (viewX < leftBorder) return viewX / 256.0;
+        if (fromRight < rightBorder) return (256.0 - fromRight) / 256.0;
+        // Repeat the paper near each border, leaving the center at native scale.
+        if (x < leftBorder) x = leftBorder + mod(x - leftBorder, strip);
+        if (x >= paperRight) {
+            // Use plain ruled paper from the left for the right margin. Read
+            // coverage from the right so a turning page reveals the one below.
+            float phase = mod(x - paperRight, strip);
+            coverageX = (paperRight - strip + phase) / 256.0;
+            x = leftBorder + phase;
+        }
+    }
+
+    if (menuBackgroundMode == menuBackgroundExtendLeftEdge && x >= 256.0) {
+        x = 0.5;
+    }
+    return clamp(x, 0.5, 255.5) / 256.0;
 }
 
 vec4 sampleBg(int layer) {
@@ -128,6 +163,18 @@ vec4 sampleBg(int layer) {
     }
     if (wideUI && ((wideBgMask >> layer) & 1) != 0) {
         return texture(bgTexture[layer], vec2(fract(uiCoord.x * 0.5), uiCoord.y));
+    }
+    if ((menuBackgroundLayers & (1 << layer)) != 0) {
+        if (menuBackgroundMode == menuBackgroundExtendTopRight && (uiCoord.x < 0.0 || uiCoord.x >= 1.0)) {
+            return texelFetch(bgTexture[layer], ivec2(255, topScreen == 1 ? 383 : 191), 0);
+        }
+        float coverageX;
+        float x = menuBackgroundX(coverageX);
+        vec4 pixel = texture(bgTexture[layer], vec2(x, uiCoord.y));
+        if (coverageX >= 0.0) {
+            pixel.a = min(pixel.a, texture(bgTexture[layer], vec2(coverageX, uiCoord.y)).a);
+        }
+        return pixel;
     }
     if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) return vec4(0.0);
     return texture(bgTexture[layer], uiCoord);
@@ -212,7 +259,8 @@ void main()
         }
     }
     bool outside = uiCoord.x < 0.0 || uiCoord.x >= 1.0;
-    bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner && !wideUI;
+    bool filler = singleScreen && fieldWidth == 256.0 && outside && !wideTrainerBanner && !wideUI
+        && menuBackgroundLayers == 0;
     if (filler) {
         color = sideBackground();
     } else {

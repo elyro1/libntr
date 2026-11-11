@@ -129,6 +129,21 @@ void SIM_SetFieldCoverageRepair(BOOL enabled);
 // sides to the backdrop), and sprite X uses OAM's 9-bit range. The 3D layer keeps its native 256 dots; see the offset.
 // Apps opt in on entry and pass FALSE on exit.
 u32 SIM_SetWideUI(BOOL enabled);
+typedef enum SIMMenuBackgroundMode {
+    SIM_MENU_BACKGROUND_EXTEND_EDGES,
+    SIM_MENU_BACKGROUND_EXTEND_TOP_RIGHT,
+    SIM_MENU_BACKGROUND_EXTEND_LEFT_EDGE,
+    SIM_MENU_BACKGROUND_PAD_BORDERS,
+} SIMMenuBackgroundMode;
+
+// Extend the selected GX_PLANEMASK_BG* layers in the single-screen layout.
+// EXTEND_TOP_RIGHT fills both margins with the layer's top-right pixel.
+// PAD_BORDERS moves the paper borders to the view edges and repeats the
+// adjacent 8-dot strips of the background to fill the new space.
+// Use SIM_MENU_BACKGROUND_BACKDROP to extend only the backdrop color.
+// Pass a layer mask of 0 on exit.
+#define SIM_MENU_BACKGROUND_BACKDROP (1 << 4)
+void SIM_SetMenuBackground(BOOL isSub, u32 layers, SIMMenuBackgroundMode mode);
 // Shift the native-width 3D layer this many dots right (clamped to +-96)
 // within the wide UI view, e.g. to put 3D Pokémon sprites in a side panel.
 void SIM_SetWideUI3DOffset(int dots);

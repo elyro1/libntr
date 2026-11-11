@@ -94,6 +94,11 @@ static int s_WideUI3DOffset = 0;
 static GLuint s_WideBgTexture[4];
 static u8 s_WideBgHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
+static struct {
+  BOOL isSub;
+  u32 layers;
+  SIMMenuBackgroundMode mode;
+} s_MenuBackground = {};
 // SIM_SetMasterBrightnessFirstLine: main-engine scanlines above it skip master brightness.
 static u32 s_MasterBrightFirstLine = 0;
 // SIM_HoldMainScreen: a copy of the presented frame, drawn over the live main
@@ -1130,6 +1135,12 @@ static void DrawEngine(BOOL isSub) {
   if (singleScreen && !(dispSel ? !isSub : isSub)) {
     return;
   }
+  const u32 menuBackgroundLayers = singleScreen && s_MenuBackground.isSub == isSub
+      ? s_MenuBackground.layers : 0;
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "menuBackgroundLayers"),
+                     menuBackgroundLayers);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "menuBackgroundMode"),
+                     s_MenuBackground.mode);
 
   // Get the enabled BGs
   u32 dispcnt = isSub ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT;
@@ -1542,7 +1553,8 @@ static void DrawEngine(BOOL isSub) {
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "singleScreen"), singleScreen);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageTexture"),
                      s_SideAverageTexUnit);
-  const bool averageSides = singleScreen && s_FieldViewWidth == SIM_NDS_SCREEN_WIDTH && !WideUIActive() &&
+  const bool averageSides = singleScreen && menuBackgroundLayers == 0 &&
+                            s_FieldViewWidth == SIM_NDS_SCREEN_WIDTH && !WideUIActive() &&
                             s_WindowViewWidth > SIM_NDS_SCREEN_WIDTH && s_SideAverageReady;
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "sideAverageValid"), averageSides);
   glBindVertexArray(g2vertexArray);
@@ -1740,6 +1752,10 @@ u32 SIM_SetWideUI(BOOL enabled) {
   return width;
 }
 
+void SIM_SetMenuBackground(BOOL isSub, u32 layers, SIMMenuBackgroundMode mode) {
+  s_MenuBackground = {isSub, layers, mode};
+}
+
 void SIM_SetWideUI3DOffset(int dots) {
   const int limit = (int)(s_MaxViewWidth - SIM_NDS_SCREEN_WIDTH) / 2;
   dots = dots < -limit ? -limit : dots > limit ? limit : dots;
@@ -1849,11 +1865,14 @@ void *SIM_Render(void *arg) {
     windowHeight = windowHeight > 0 ? windowHeight : 1;
     // Quantize to even logical pixels, keeping the 256px UI exactly centered.
     const double windowLogicalWidth = 192.0 * windowWidth / windowHeight;
+    const bool fullWidthMenu = s_SIM_config.screenLayout == SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY
+        && s_MenuBackground.layers != 0 && s_MenuBackground.isSub == !(s_reg_GX_POWCNT >> 15)
+        && windowLogicalWidth >= SIM_NDS_SCREEN_WIDTH;
     s_WindowViewWidth = (u32)fmin((double)s_MaxViewWidth, fmax(256.0,
         windowLogicalWidth)) & ~1u;
     // Native screens retain their capped gradient, but its outer fade fills
     // the remaining window width without widening the game projection.
-    s_BorderPresentationWidth = windowLogicalWidth > s_MaxViewWidth
+    s_BorderPresentationWidth = fullWidthMenu || windowLogicalWidth > s_MaxViewWidth
         ? (float)windowLogicalWidth : (float)s_WindowViewWidth;
 
     // Scale the viewport to the correct aspect ratio and center it
@@ -1875,7 +1894,7 @@ void *SIM_Render(void *arg) {
     }
 
     viewWidth = windowWidth;
-    viewHeight = (int)((float)windowWidth / aspectRatio);
+    viewHeight = fullWidthMenu ? windowHeight : (int)((float)windowWidth / aspectRatio);
     viewY = (windowHeight - viewHeight) / 2;
     if (viewHeight > windowHeight) {
       // Too tall to fit in the window. Scale down the width instead
