@@ -134,10 +134,12 @@ typedef enum SIMMenuBackgroundMode {
     SIM_MENU_BACKGROUND_EXTEND_TOP_RIGHT,
     SIM_MENU_BACKGROUND_EXTEND_LEFT_EDGE,
     SIM_MENU_BACKGROUND_PAD_BORDERS,
+    SIM_MENU_BACKGROUND_REPEAT_BOTTOM_RIGHT_STRIP,
 } SIMMenuBackgroundMode;
 
 // Extend the selected GX_PLANEMASK_BG* layers in the single-screen layout.
 // EXTEND_TOP_RIGHT fills both margins with the layer's top-right pixel.
+// REPEAT_BOTTOM_RIGHT_STRIP tiles the bottom eight pixels of the rightmost column in both margins.
 // PAD_BORDERS moves the paper borders to the view edges and repeats the
 // adjacent 8-dot strips of the background to fill the new space.
 // Use SIM_MENU_BACKGROUND_BACKDROP to extend only the backdrop color.

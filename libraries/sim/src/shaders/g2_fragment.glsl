@@ -61,6 +61,7 @@ uniform int menuBackgroundMode;
 const int menuBackgroundExtendTopRight = 1;
 const int menuBackgroundExtendLeftEdge = 2;
 const int menuBackgroundPadBorders = 3;
+const int menuBackgroundRepeatBottomRightStrip = 4;
 uniform bool singleScreen;
 uniform sampler2D sideAverageTexture;
 uniform bool sideAverageValid;
@@ -165,8 +166,14 @@ vec4 sampleBg(int layer) {
         return texture(bgTexture[layer], vec2(fract(uiCoord.x * 0.5), uiCoord.y));
     }
     if ((menuBackgroundLayers & (1 << layer)) != 0) {
-        if (menuBackgroundMode == menuBackgroundExtendTopRight && (uiCoord.x < 0.0 || uiCoord.x >= 1.0)) {
-            return texelFetch(bgTexture[layer], ivec2(255, topScreen == 1 ? 383 : 191), 0);
+        if (uiCoord.x < 0.0 || uiCoord.x >= 1.0) {
+            if (menuBackgroundMode == menuBackgroundExtendTopRight) {
+                return texelFetch(bgTexture[layer], ivec2(255, topScreen == 1 ? 383 : 191), 0);
+            }
+            if (menuBackgroundMode == menuBackgroundRepeatBottomRightStrip) {
+                int row = int(floor(uiCoord.y * 384.0)) % 8;
+                return texelFetch(bgTexture[layer], ivec2(255, (topScreen == 1 ? 192 : 0) + row), 0);
+            }
         }
         float coverageX;
         float x = menuBackgroundX(coverageX);
