@@ -78,13 +78,33 @@ BOOL CARD_PortReadBackup(u32 offset, void *data, u32 size)
     return ok;
 }
 
+// Grows a short save file to the full backup size with erased (0xFF) bytes,
+// which is what reading past its end returns anyway. A file of the device's
+// exact size can be used as is on hardware and in emulators.
+static BOOL CARDi_PortPadBackup(FILE *file)
+{
+    const long total = (long)CARD_GetBackupTotalSize();
+    if (total <= 0 || fseek(file, 0, SEEK_END) != 0) return total <= 0;
+    long length = ftell(file);
+    if (length < 0) return FALSE;
+    unsigned char erased[4096];
+    memset(erased, 0xff, sizeof(erased));
+    while (length < total) {
+        size_t chunk = (size_t)(total - length) < sizeof(erased) ? (size_t)(total - length) : sizeof(erased);
+        if (fwrite(erased, 1, chunk, file) != chunk) return FALSE;
+        length += (long)chunk;
+    }
+    return TRUE;
+}
+
 BOOL CARD_PortWriteBackup(u32 offset, const void *data, u32 size)
 {
     FILE *file = fopen(CARD_PortSavePath, "rb+");
     if (!file && errno == ENOENT) file = fopen(CARD_PortSavePath, "wb+");
     BOOL ok = file != NULL;
     if (file) {
-        ok = fseek(file, offset, SEEK_SET) == 0 && fwrite(data, 1, size, file) == size;
+        ok = CARDi_PortPadBackup(file)
+            && fseek(file, offset, SEEK_SET) == 0 && fwrite(data, 1, size, file) == size;
         if (fclose(file) != 0) ok = FALSE;
     }
     cardi_common.cmd->result = ok ? CARD_RESULT_SUCCESS : CARD_RESULT_TIMEOUT;
