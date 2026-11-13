@@ -66,6 +66,17 @@ uniform bool singleScreen;
 uniform sampler2D sideAverageTexture;
 uniform bool sideAverageValid;
 uniform bool averagePass;
+// SIM_SetWideUISmoothBg: this BG (-1: none) shows a ramp position field
+// stretched over the view, colored from the live ramp palette entries.
+uniform int smoothBgLayer;
+uniform sampler2D smoothBgTexture;
+uniform vec3 smoothBgRamp[32];
+uniform int smoothBgRampSize;
+// SIM_SetVignette: center x, y and inner, outer radii in native dots; the
+// layers (bits 0-3 BGs, 4 OBJ) it leaves alone.
+uniform vec4 vignette;
+uniform float vignetteStrength;
+uniform int vignetteKeepLayers;
 vec2 uiCoord;
 vec2 worldCoord;
 
@@ -108,6 +119,16 @@ float menuBackgroundX(out float coverageX) {
     return clamp(x, 0.5, 255.5) / 256.0;
 }
 
+vec4 sampleSmoothBg() {
+    float line = ((topScreen == 1 ? 1.0 : 0.5) - fragTexCoord.y) * 384.0;
+    float t = texture(smoothBgTexture, vec2(fragTexCoord.x, line / 192.0)).r * float(smoothBgRampSize - 1);
+    int i = clamp(int(floor(t)), 0, smoothBgRampSize - 2);
+    vec3 c = mix(smoothBgRamp[i], smoothBgRamp[i + 1], clamp(t - float(i), 0.0, 1.0));
+    // Half an 8-bit step of noise keeps the gradient from banding.
+    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    return vec4(clamp(c + (noise - 0.5) / 255.0, 0.0, 1.0), 1.0);
+}
+
 vec4 sampleBg(int layer) {
     if (wideTrainerBanner) {
         if (layer == 3) {
@@ -124,6 +145,7 @@ vec4 sampleBg(int layer) {
         return texture(bgTexture[layer], uiCoord);
     }
     if ((windowMask & (1 << layer)) == 0) return vec4(0.0);
+    if (layer == smoothBgLayer) return sampleSmoothBg();
     if (layer == fieldTransitionMask) {
         // A screen-covering wipe uses the whole viewport, independently of
         // the native UI and the wider 3D world beneath its transparent dots.
@@ -370,6 +392,13 @@ void main()
         return;
     }
     float masterLine = ((topScreen == 1 ? 1.0 : 0.5) - fragTexCoord.y) * 384.0;
+    if (vignetteStrength > 0.0) {
+        if (((vignetteKeepLayers >> currentBgDrawn) & 1) == 0) {
+            vec2 at = vec2(uiCoord.x * 256.0, masterLine);
+            float distance = length(at - vignette.xy);
+            color.rgb *= 1.0 - vignetteStrength * smoothstep(vignette.z, vignette.w, distance);
+        }
+    }
     if (heldScreenWeight > 0.0 && masterLine >= float(heldScreenFirstLine)) {
         vec3 held = texelFetch(heldScreenTexture, ivec2(gl_FragCoord.xy), 0).rgb;
         color.rgb = mix(color.rgb, held, heldScreenWeight);

@@ -129,6 +129,23 @@ void SIM_SetFieldCoverageRepair(BOOL enabled);
 // sides to the backdrop), and sprite X uses OAM's 9-bit range. The 3D layer keeps its native 256 dots; see the offset.
 // Apps opt in on entry and pass FALSE on exit.
 u32 SIM_SetWideUI(BOOL enabled);
+// Wide UI: main BG `layer` draws as a smooth gradient across the whole view at
+// window resolution instead of its tiles. `field` holds width x height ramp
+// positions (0: the first ramp color, 65535: the last) stretched over the view
+// and the screen's 192 lines, sampled bilinearly. `entries` are the ramp's BG
+// palette entries (palette * 16 + index), read each frame, so palette fades
+// apply. The layer stays opaque and keeps its priority, window and blending.
+// The data is copied. A NULL field turns it off; apps do so on exit.
+// Wide UI: the 3D layer spans the whole view instead of the native 256 dots.
+// Projections keep their native horizontal scale, so the middle 256 dots look
+// as before and the sides show more of the scene. Off again with SIM_SetWideUI(FALSE).
+void SIM_SetWideUI3D(BOOL enabled);
+// Darkens the main screen around (x, y), in native dots (x may lie in a wide
+// view's margins): untouched within `inner` dots, by `strength` (0..1) from
+// `outer` dots on, eased between. Dots whose top layer is in keepLayers
+// (GX_PLANEMASK_BG0..OBJ) stay at full brightness. A strength of 0 turns it off.
+void SIM_SetVignette(float x, float y, float inner, float outer, float strength, u32 keepLayers);
+void SIM_SetWideUISmoothBg(int layer, const u16 *field, u32 width, u32 height, const u16 *entries, u32 numEntries);
 typedef enum SIMMenuBackgroundMode {
     SIM_MENU_BACKGROUND_EXTEND_EDGES,
     SIM_MENU_BACKGROUND_EXTEND_TOP_RIGHT,

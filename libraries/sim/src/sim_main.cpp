@@ -6,6 +6,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <vector>
 #include <unordered_map>
 #include <pthread.h>
 #include <SDL2/SDL.h>
@@ -91,9 +92,33 @@ static GLuint s_TrainerBannerTexture;
 // shift within it, and 512-dot textures of the main engine's text BGs.
 static u32 s_WideUIWidth = 256;
 static int s_WideUI3DOffset = 0;
+// SIM_SetWideUI3D: the wide UI's 3D layer spans the view at native scale.
+static BOOL s_WideUI3D = FALSE;
+// SIM_SetVignette, main screen: center and radii in native dots, strength,
+// and the layers it leaves alone.
+static struct {
+  float x = 0, y = 0, inner = 0, outer = 1, strength = 0;
+  u32 keepLayers = 0;
+} s_Vignette;
 static GLuint s_WideBgTexture[4];
 static u8 s_WideBgHalf[4 * SIM_NDS_SCREEN_WIDTH * SIM_NDS_SCREEN_HEIGHT * 2];
 static BOOL s_ScreenFadeWindows[2] = {FALSE, FALSE};
+// SIM_SetWideUISmoothBg: set by the game thread, uploaded by the render thread.
+// Units 0-16 are taken; drivers with fewer units go without.
+static constexpr GLint s_SmoothBgTexUnit = 17;
+static bool s_SmoothBgAvailable = false;
+static constexpr u32 s_SmoothBgMaxEntries = 32;
+static std::mutex s_SmoothBgMutex;
+static struct {
+  int layer = -1;
+  std::vector<float> field;
+  u32 width = 0;
+  u32 height = 0;
+  u16 entries[s_SmoothBgMaxEntries];
+  u32 numEntries = 0;
+  bool dirty = false;
+} s_SmoothBg;
+static GLuint s_SmoothBgTexture;
 static struct {
   BOOL isSub;
   u32 layers;
@@ -821,6 +846,23 @@ void *SIM_RenderInit(void *arg) {
                  0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
   }
 
+  {
+    GLint units = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+    s_SmoothBgAvailable = units > s_SmoothBgTexUnit;
+  }
+  glGenTextures(1, &s_SmoothBgTexture);
+  glActiveTexture(GL_TEXTURE0 + (s_SmoothBgAvailable ? s_SmoothBgTexUnit : 0));
+  glBindTexture(GL_TEXTURE_2D, s_SmoothBgTexture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  {
+    const float zero = 0.0f;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, 1, 1, 0, GL_RED, GL_FLOAT, &zero);
+  }
+
   glGenTextures(1, &s_FieldParticlesTexture);
   glActiveTexture(GL_TEXTURE0 + s_FieldParticlesTexUnit);
   glBindTexture(GL_TEXTURE_2D_ARRAY, s_FieldParticlesTexture);
@@ -1376,6 +1418,45 @@ static void DrawEngine(BOOL isSub) {
                      fieldParticlesEnabled);
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "wideUI"), wideUI);
 
+  glProgramUniform4f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "vignette"),
+                     s_Vignette.x, s_Vignette.y, s_Vignette.inner, s_Vignette.outer);
+  glProgramUniform1f(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "vignetteStrength"),
+                     isSub ? 0.0f : s_Vignette.strength);
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "vignetteKeepLayers"),
+                     (int)s_Vignette.keepLayers);
+
+  int smoothBgLayer = -1;
+  {
+    std::lock_guard<std::mutex> lock(s_SmoothBgMutex);
+    if (wideUI && s_SmoothBgAvailable && s_SmoothBg.layer >= 0) {
+      glActiveTexture(GL_TEXTURE0 + s_SmoothBgTexUnit);
+      glBindTexture(GL_TEXTURE_2D, s_SmoothBgTexture);
+      if (s_SmoothBg.dirty) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, s_SmoothBg.width, s_SmoothBg.height, 0,
+                     GL_RED, GL_FLOAT, s_SmoothBg.field.data());
+        s_SmoothBg.dirty = false;
+      }
+      float ramp[s_SmoothBgMaxEntries * 3];
+      for (u32 i = 0; i < s_SmoothBg.numEntries; i++) {
+        u8 r, g, b;
+        SIM_u16ToRGB(((u16 *)s_HW_BG_PLTT)[s_SmoothBg.entries[i] & 0xFF], &r, &g, &b);
+        ramp[i * 3 + 0] = r / 255.0f;
+        ramp[i * 3 + 1] = g / 255.0f;
+        ramp[i * 3 + 2] = b / 255.0f;
+      }
+      glProgramUniform3fv(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "smoothBgRamp"),
+                          s_SmoothBg.numEntries, ramp);
+      glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "smoothBgRampSize"),
+                         s_SmoothBg.numEntries);
+      smoothBgLayer = s_SmoothBg.layer;
+    }
+  }
+  if (s_SmoothBgAvailable) {
+    glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "smoothBgTexture"), s_SmoothBgTexUnit);
+  }
+  glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "smoothBgLayer"), smoothBgLayer);
+
   int drawnOAMs = 0;
   int wideBgMask = 0;
 
@@ -1683,9 +1764,13 @@ static void HandleJoystickKeyUp(int aKey) {
 
 static void Set3DViewport() {
   const u32 scale = s_SIM_config.internalResolutionScale;
-  const u32 width = s_FieldViewWidth;
-  // A wide UI keeps the native 3D layer, shifted within the view.
+  const bool wide3D = s_WideUI3D && WideUIActive() && s_WideUIWidth > s_FieldViewWidth;
+  const u32 width = wide3D ? s_WideUIWidth : s_FieldViewWidth;
+  // A wide UI keeps the native 3D layer, shifted within the view, unless it
+  // asked for a wide one: projections then keep their native horizontal scale.
   const int shift = width == SIM_NDS_SCREEN_WIDTH && WideUIActive() ? s_WideUI3DOffset : 0;
+  glProgramUniform1f(g3shaderProgramID, glGetUniformLocation(g3shaderProgramID, "clipScaleX"),
+                     wide3D ? (float)SIM_NDS_SCREEN_WIDTH / width : 1.0f);
   glViewport(((s_MaxViewWidth - width) / 2 + shift) * scale,
              (s_reg_GX_POWCNT >> 15) ? SIM_NDS_SCREEN_HEIGHT * scale : 0,
              width * scale, SIM_NDS_SCREEN_HEIGHT * scale);
@@ -1746,10 +1831,49 @@ u32 SIM_SetWideUI(BOOL enabled) {
     G3SIM_FlushArray();
     G3SIM_DrawItems();
     s_WideUIWidth = width;
-    if (!enabled) s_WideUI3DOffset = 0;
+    if (!enabled) {
+      s_WideUI3DOffset = 0;
+      s_WideUI3D = FALSE;
+    }
     Set3DViewport();
   }
   return width;
+}
+
+void SIM_SetWideUISmoothBg(int layer, const u16 *field, u32 width, u32 height, const u16 *entries, u32 numEntries) {
+  std::lock_guard<std::mutex> lock(s_SmoothBgMutex);
+  if (!field || width == 0 || height == 0 || numEntries < 2 || layer < 0 || layer > 3) {
+    s_SmoothBg.layer = -1;
+    s_SmoothBg.field.clear();
+    return;
+  }
+  if (numEntries > s_SmoothBgMaxEntries) numEntries = s_SmoothBgMaxEntries;
+  s_SmoothBg.layer = layer;
+  s_SmoothBg.field.resize(width * height);
+  for (u32 i = 0; i < width * height; i++) s_SmoothBg.field[i] = field[i] / 65535.0f;
+  s_SmoothBg.width = width;
+  s_SmoothBg.height = height;
+  memcpy(s_SmoothBg.entries, entries, numEntries * sizeof(u16));
+  s_SmoothBg.numEntries = numEntries;
+  s_SmoothBg.dirty = true;
+}
+
+void SIM_SetWideUI3D(BOOL enabled) {
+  if (s_WideUI3D != enabled) {
+    G3SIM_FlushArray();
+    G3SIM_DrawItems();
+    s_WideUI3D = enabled;
+    Set3DViewport();
+  }
+}
+
+void SIM_SetVignette(float x, float y, float inner, float outer, float strength, u32 keepLayers) {
+  s_Vignette.x = x;
+  s_Vignette.y = y;
+  s_Vignette.inner = inner;
+  s_Vignette.outer = outer > inner ? outer : inner + 1.0f;
+  s_Vignette.strength = strength < 0.0f ? 0.0f : (strength > 1.0f ? 1.0f : strength);
+  s_Vignette.keepLayers = keepLayers;
 }
 
 void SIM_SetMenuBackground(BOOL isSub, u32 layers, SIMMenuBackgroundMode mode) {
