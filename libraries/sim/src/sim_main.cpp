@@ -27,6 +27,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <nitro/os.h>
 #include <nitro/pxi/common/fifo.h>
 #include <simulator/config/sim_config.h>
+#include <simulator/config/config_check.h>
 #include <simulator/drawmsg.h>
 #include <simulator/g3_draw.h>
 #include <simulator/g3_handler.h>
@@ -2528,13 +2529,27 @@ int main(int argc, char *argv[]) {
   SIM_Dbg_Init();
   SIM_ProfileInit();
 
+  for (int arg = 1; arg < argc; arg++) {
+    if (strcmp(argv[arg], "--print-config") == 0) {
+      SIM_ConfigCheck_SetPrintOnly(TRUE);
+    }
+  }
+
   // Load default config
   SIM_Config_LoadDefaults(&s_SIM_config);
 
   // Load configuration file
-  if (!SIM_Config_LoadConfigFile(&s_SIM_config)) {
+  if (!SIM_Config_LoadConfigFile(&s_SIM_config) && !SIM_ConfigCheck_PrintOnly()) {
     // Config file does not exist. Save config file with defaults
     SIM_Config_SaveConfigFile(&s_SIM_config);
+  }
+
+  if (SIM_ConfigCheck_PrintOnly()) {
+    SIM_Config_PrintEffective(&s_SIM_config, stdout);
+    // Without a window or system: NitroMain loads the project's configs, prints them and exits before
+    // starting the game
+    NitroMain();
+    return 0;
   }
 
   // Initialize Nitro registers

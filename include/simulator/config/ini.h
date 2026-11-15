@@ -21,9 +21,10 @@ extern "C" {
 
 #include <stdio.h>
 
-/* Nonzero if ini_handler callback should accept lineno parameter. */
+/* Nonzero if ini_handler callback should accept lineno parameter. On here so that config warnings can name the
+   line (config_check.h). */
 #ifndef INI_HANDLER_LINENO
-#define INI_HANDLER_LINENO 0
+#define INI_HANDLER_LINENO 1
 #endif
 
 /* Visibility symbols, required for Windows DLLs */

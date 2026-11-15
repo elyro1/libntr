@@ -1,5 +1,6 @@
 libsim_srcs = files(
     'blip-buf/blip_buf.c',
+    'config/config_check.c',
     'config/ini.c',
     'config/sim_config.c',
     'fireflower/nds-extract.cpp',

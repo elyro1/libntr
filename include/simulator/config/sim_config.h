@@ -2,6 +2,7 @@
 #define SIM_CONFIG_H
 
 #include <nitro.h>
+#include <stdio.h>
 
 typedef enum {
     SIM_CONFIG_SCREEN_LAYOUT_VERTICAL, /* Vertical screen layout (like a real DS) */
@@ -85,6 +86,8 @@ BOOL SIM_Config_LoadConfigFile(SIM_config_type * aConfig);
 float SIM_Config_ValidateFastForwardMultiplier(float multiplier);
 void SIM_Config_LoadDefaults(SIM_config_type * aConfig);
 void SIM_Config_SaveConfigFile(SIM_config_type * aConfig);
+// Lists every setting with where its value came from (--print-config)
+void SIM_Config_PrintEffective(const SIM_config_type * aConfig, FILE * out);
 void SIM_Config_SetOSNVRAMConfig(SIM_config_type * aConfig);
 
 #ifdef __cplusplus

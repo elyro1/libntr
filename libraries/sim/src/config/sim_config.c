@@ -1,6 +1,7 @@
 #include <SDL2/SDL_keycode.h>
 #include <nitro.h>
 #include <simulator/sim.h>
+#include <simulator/config/config_check.h>
 #include <simulator/config/ini.h>
 #include <simulator/config/sim_config.h>
 
@@ -13,23 +14,47 @@
 #include <math.h>
 #include <errno.h>
 #include <ctype.h>
+#include <limits.h>
 
 #define SIM_CONFIG_FILE_PATH "./sim_config.ini"
 
 static int IniHandler(void* user, const char* section, const char* name,
-                   const char* value);
+                   const char* value, int line);
 static const char * BoolToString(BOOL arg);
-static BOOL StringToBool(const char * str);
+static BOOL ParseBool(const char *value, BOOL *out);
+static BOOL ParseInt(const char *value, int *out);
+static void WriteConfig(SIM_ConfigText *text, const SIM_config_type *aConfig);
+
+static SIM_ConfigCheck sCheck;
+// The key being handled, for warnings about its value
+static const char *sSection, *sName;
+static int sLine;
+
+// Keys the writer no longer emits but that are still read
+static const SIM_ConfigKeyName sLegacyKeys[] = {
+    { "Net", "ServerIp" },
+};
+
+// Invalid values keep the setting's previous value, with a warning
+#define SET_BOOL(field) do { BOOL parsed_; if (ParseBool(value, &parsed_)) (field) = parsed_; } while (0)
+#define SET_INT(field) do { int parsed_; if (ParseInt(value, &parsed_)) (field) = parsed_; } while (0)
 static const char * ScreenLayoutTypeToString(SIM_config_screen_layout_type layout);
 static SIM_config_screen_layout_type StringToScreenLayoutType(const char * str);
 
 
 static int IniHandler(void* user, const char* section, const char* name,
-                   const char* value)
+                   const char* value, int line)
 {
-    #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
+    #define MATCH(s, n) (strcmp(section, s) == 0 && strcmp(name, n) == 0)
 
     SIM_config_type * config = (SIM_config_type *)user;
+
+    if (!SIM_ConfigCheck_Key(&sCheck, section, name, line)) {
+        return 1;
+    }
+    sSection = section;
+    sName = name;
+    sLine = line;
 
     if(MATCH("Interface", "MenuScalePercent")) {
         char *end;
@@ -41,38 +66,44 @@ static int IniHandler(void* user, const char* section, const char* name,
             ? 0 : (int)scale;
     }
     if(MATCH("Interface", "PauseWhileOpen")) {
-        config->pauseWhileMenuOpen = StringToBool(value);
+        SET_BOOL(config->pauseWhileMenuOpen);
     }
 
     // General section
     if(MATCH("General", "InternalResolutionScale")) {
-        int scale = atoi(value);
+        int scale = config->internalResolutionScale;
+        ParseInt(value, &scale);
         config->internalResolutionScale = scale < 1 ? 1 : (scale > 20 ? 20 : scale);
     }
     if(MATCH("General", "MasterVolume")) {
-        int volume = atoi(value);
+        int volume = config->masterVolume;
+        ParseInt(value, &volume);
         config->masterVolume = volume < 0 ? 0 : (volume > 127 ? 127 : volume);
     }
     if(MATCH("General", "WindowHeight")) {
-        config->windowHeight = atoi(value);
+        SET_INT(config->windowHeight);
     }
     if(MATCH("General", "WindowWidth")) {
-        config->windowWidth = atoi(value);
+        SET_INT(config->windowWidth);
     }
     if(MATCH("General", "FullScreen")) {
-        config->fullScreen = StringToBool(value);
+        SET_BOOL(config->fullScreen);
     }
     if(MATCH("General", "ScreenLayout")) {
-        config->screenLayout = StringToScreenLayoutType(value);
+        if (strcmp(value, ScreenLayoutTypeToString(StringToScreenLayoutType(value))) == 0) {
+            config->screenLayout = StringToScreenLayoutType(value);
+        } else {
+            SIM_ConfigCheck_BadValue(&sCheck, section, name, value, line, "vertical, horizontal, top_only or large");
+        }
     }
     if(MATCH("General", "SwapScreens")) {
-        config->swapScreens = StringToBool(value);
+        SET_BOOL(config->swapScreens);
     }
     if(MATCH("General", "VsyncInterval")) {
-        config->vsyncInterval = atoi(value);
+        SET_INT(config->vsyncInterval);
     }
     if(MATCH("General", "CapFrameRate")) {
-        config->capFrameRate = StringToBool(value);
+        SET_BOOL(config->capFrameRate);
     }
     if(MATCH("General", "FastForwardMultiplier")) {
         char *end;
@@ -85,7 +116,7 @@ static int IniHandler(void* user, const char* section, const char* name,
     }
 
     if(MATCH("General", "MacAddr")) {
-        char * pos = value;
+        const char * pos = value;
         if(strlen(value) >= 12) {
             for (size_t count = 0; count < 6; count++) {
                 sscanf(pos, "%2hhx", &config->macAddr[count]);
@@ -108,109 +139,109 @@ static int IniHandler(void* user, const char* section, const char* name,
             : (int)deadzone;
     }
     if(MATCH("PAD", "AKey")) {
-        config->padSettings.aKey = atoi(value);
+        SET_INT(config->padSettings.aKey);
     }
     if(MATCH("PAD", "BKey")) {
-        config->padSettings.bKey = atoi(value);
+        SET_INT(config->padSettings.bKey);
     }
     if(MATCH("PAD", "XKey")) {
-        config->padSettings.xKey = atoi(value);
+        SET_INT(config->padSettings.xKey);
     }
     if(MATCH("PAD", "YKey")) {
-        config->padSettings.yKey = atoi(value);
+        SET_INT(config->padSettings.yKey);
     }
     if(MATCH("PAD", "UpKey")) {
-        config->padSettings.upKey = atoi(value);
+        SET_INT(config->padSettings.upKey);
     }
     if(MATCH("PAD", "DownKey")) {
-        config->padSettings.downKey = atoi(value);
+        SET_INT(config->padSettings.downKey);
     }
     if(MATCH("PAD", "LeftKey")) {
-        config->padSettings.leftKey = atoi(value);
+        SET_INT(config->padSettings.leftKey);
     }
     if(MATCH("PAD", "RightKey")) {
-        config->padSettings.rightKey = atoi(value);
+        SET_INT(config->padSettings.rightKey);
     }
     if(MATCH("PAD", "LKey")) {
-        config->padSettings.lKey = atoi(value);
+        SET_INT(config->padSettings.lKey);
     }
     if(MATCH("PAD", "RKey")) {
-        config->padSettings.rKey = atoi(value);
+        SET_INT(config->padSettings.rKey);
     }
     if(MATCH("PAD", "StartKey")) {
-        config->padSettings.startKey = atoi(value);
+        SET_INT(config->padSettings.startKey);
     }
     if(MATCH("PAD", "SelectKey")) {
-        config->padSettings.selectKey = atoi(value);
+        SET_INT(config->padSettings.selectKey);
     }
     if(MATCH("PAD", "FastForwardKey")) {
-        config->padSettings.fastForwardKey = atoi(value);
+        SET_INT(config->padSettings.fastForwardKey);
     }
     if(MATCH("PAD", "FullScreenKey")) {
-        config->padSettings.fullScreenKey = atoi(value);
+        SET_INT(config->padSettings.fullScreenKey);
     }
     if(MATCH("PAD", "GUIKey")) {
-        config->padSettings.guiKey = atoi(value);
+        SET_INT(config->padSettings.guiKey);
     }
     if(MATCH("PAD", "AJoyKey")) {
-        config->padSettings.aJoyKey = atoi(value);
+        SET_INT(config->padSettings.aJoyKey);
     }
     if(MATCH("PAD", "BJoyKey")) {
-        config->padSettings.bJoyKey = atoi(value);
+        SET_INT(config->padSettings.bJoyKey);
     }
     if(MATCH("PAD", "XJoyKey")) {
-        config->padSettings.xJoyKey = atoi(value);
+        SET_INT(config->padSettings.xJoyKey);
     }
     if(MATCH("PAD", "YJoyKey")) {
-        config->padSettings.yJoyKey = atoi(value);
+        SET_INT(config->padSettings.yJoyKey);
     }
     if(MATCH("PAD", "UpJoyKeySecondary")) {
-        config->padSettings.upJoyKeySecondary = atoi(value);
+        SET_INT(config->padSettings.upJoyKeySecondary);
     }
     if(MATCH("PAD", "UpJoyKey")) {
-        config->padSettings.upJoyKey = atoi(value);
+        SET_INT(config->padSettings.upJoyKey);
     }
     if(MATCH("PAD", "DownJoyKeySecondary")) {
-        config->padSettings.downJoyKeySecondary = atoi(value);
+        SET_INT(config->padSettings.downJoyKeySecondary);
     }
     if(MATCH("PAD", "DownJoyKey")) {
-        config->padSettings.downJoyKey = atoi(value);
+        SET_INT(config->padSettings.downJoyKey);
     }
     if(MATCH("PAD", "LeftJoyKeySecondary")) {
-        config->padSettings.leftJoyKeySecondary = atoi(value);
+        SET_INT(config->padSettings.leftJoyKeySecondary);
     }
     if(MATCH("PAD", "LeftJoyKey")) {
-        config->padSettings.leftJoyKey = atoi(value);
+        SET_INT(config->padSettings.leftJoyKey);
     }
     if(MATCH("PAD", "RightJoyKeySecondary")) {
-        config->padSettings.rightJoyKeySecondary = atoi(value);
+        SET_INT(config->padSettings.rightJoyKeySecondary);
     }
     if(MATCH("PAD", "RightJoyKey")) {
-        config->padSettings.rightJoyKey = atoi(value);
+        SET_INT(config->padSettings.rightJoyKey);
     }
     if(MATCH("PAD", "LJoyKey")) {
-        config->padSettings.lJoyKey = atoi(value);
+        SET_INT(config->padSettings.lJoyKey);
     }
     if(MATCH("PAD", "RJoyKey")) {
-        config->padSettings.rJoyKey = atoi(value);
+        SET_INT(config->padSettings.rJoyKey);
     }
     if(MATCH("PAD", "StartJoyKey")) {
-        config->padSettings.startJoyKey = atoi(value);
+        SET_INT(config->padSettings.startJoyKey);
     }
     if(MATCH("PAD", "SelectJoyKey")) {
-        config->padSettings.selectJoyKey = atoi(value);
+        SET_INT(config->padSettings.selectJoyKey);
     }
 
     //OS NVRAM
     //Owner Info
     if(MATCH("OSNVRAM", "Owner_FavoriteColor")) {
-        config->osNvramConfig.ncd.owner.favoriteColor = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.owner.favoriteColor);
     }
     if(MATCH("OSNVRAM", "Owner_BirthdayMonth")) {
-        config->osNvramConfig.ncd.owner.birthday.month = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.owner.birthday.month);
     }
     if(MATCH("OSNVRAM", "Owner_BirthdayDay")) {
-        config->osNvramConfig.ncd.owner.birthday.day = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.owner.birthday.day);
     }
     if(MATCH("OSNVRAM", "Owner_Nickname")) {
         memset(config->osNvramConfig.ncd.owner.nickname.str, 0, NVRAM_CONFIG_NICKNAME_LENGTH*2);
@@ -229,91 +260,95 @@ static int IniHandler(void* user, const char* section, const char* name,
     }
     //Alarm
     if(MATCH("OSNVRAM", "Alarm_Hour")) {
-        config->osNvramConfig.ncd.alarm.hour = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.alarm.hour);
     }
     if(MATCH("OSNVRAM", "Alarm_Minute")) {
-        config->osNvramConfig.ncd.alarm.minute = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.alarm.minute);
     }
     if(MATCH("OSNVRAM", "Alarm_Second")) {
-        config->osNvramConfig.ncd.alarm.minute = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.alarm.second);
     }
     if(MATCH("OSNVRAM", "Alarm_DaysOfWeek")) {
-        config->osNvramConfig.ncd.alarm.enableWeek = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.alarm.enableWeek);
     }
     if(MATCH("OSNVRAM", "Alarm_Enabled")) {
-        config->osNvramConfig.ncd.alarm.alarmOn = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.alarm.alarmOn);
     }
     //Touch panel calibration
     if(MATCH("OSNVRAM", "TP_RawX1")) {
-        config->osNvramConfig.ncd.tp.raw_x1 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.raw_x1);
     }
     if(MATCH("OSNVRAM", "TP_RawY1")) {
-        config->osNvramConfig.ncd.tp.raw_y1 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.raw_y1);
     }
     if(MATCH("OSNVRAM", "TP_dx1")) {
-        config->osNvramConfig.ncd.tp.dx1 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.dx1);
     }
     if(MATCH("OSNVRAM", "TP_dy1")) {
-        config->osNvramConfig.ncd.tp.dy1 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.dy1);
     }
     if(MATCH("OSNVRAM", "TP_RawX2")) {
-        config->osNvramConfig.ncd.tp.raw_x2 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.raw_x2);
     }
     if(MATCH("OSNVRAM", "TP_RawY2")) {
-        config->osNvramConfig.ncd.tp.raw_y2 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.raw_y2);
     }
     if(MATCH("OSNVRAM", "TP_dx2")) {
-        config->osNvramConfig.ncd.tp.dx2 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.dx2);
     }
     if(MATCH("OSNVRAM", "TP_dy2")) {
-        config->osNvramConfig.ncd.tp.dy2 = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.tp.dy2);
     }
     //Options
     if(MATCH("OSNVRAM", "Option_Language")) {
-        config->osNvramConfig.ncd.option.language = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.language);
     }
     if(MATCH("OSNVRAM", "Option_AGBLCD")) {
-        config->osNvramConfig.ncd.option.agbLcd = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.agbLcd);
     }
     if(MATCH("OSNVRAM", "Option_PullOutCardFlag")) {
-        config->osNvramConfig.ncd.option.detectPullOutCardFlag = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.detectPullOutCardFlag);
     }
     if(MATCH("OSNVRAM", "Option_PullOutCtrdgFlag")) {
-        config->osNvramConfig.ncd.option.detectPullOutCtrdgFlag = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.detectPullOutCtrdgFlag);
     }
     if(MATCH("OSNVRAM", "Option_AutoBootFlag")) {
-        config->osNvramConfig.ncd.option.autoBootFlag = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.autoBootFlag);
     }
     if(MATCH("OSNVRAM", "Option_FavoriteColorSet")) {
-        config->osNvramConfig.ncd.option.input_favoriteColor = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.input_favoriteColor);
     }
     if(MATCH("OSNVRAM", "Option_TouchPanelCalibrated")) {
-        config->osNvramConfig.ncd.option.input_tp = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.input_tp);
     }
     if(MATCH("OSNVRAM", "Option_LanguageSet")) {
-        config->osNvramConfig.ncd.option.input_language = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.input_language);
     }
     if(MATCH("OSNVRAM", "Option_RTCSet")) {
-        config->osNvramConfig.ncd.option.input_rtc = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.input_rtc);
     }
     if(MATCH("OSNVRAM", "Option_NicknameSet")) {
-        config->osNvramConfig.ncd.option.input_nickname = StringToBool(value);
+        SET_BOOL(config->osNvramConfig.ncd.option.input_nickname);
     }
     if(MATCH("OSNVRAM", "Option_Timezone")) {
-        config->osNvramConfig.ncd.option.timezone = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.timezone);
     }
     if(MATCH("OSNVRAM", "Option_RTCClockAdjust")) {
-        config->osNvramConfig.ncd.option.rtcClockAdjust = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.rtcClockAdjust);
     }
     if(MATCH("OSNVRAM", "Option_RTCOffset")) {
-        config->osNvramConfig.ncd.option.rtcOffset = atoi(value);
+        SET_INT(config->osNvramConfig.ncd.option.rtcOffset);
     }
 
     // Net Settings
-    if(MATCH("Net", "ServerIp")) {
+    if(MATCH("LAN", "ServerIp") || MATCH("Net", "ServerIp")) {
         memset(config->netSettings.serverIp, 0, sizeof(config->netSettings.serverIp));
         strncpy(config->netSettings.serverIp, value, sizeof(config->netSettings.serverIp)-1);
+        if (strcmp(section, "Net") == 0) {
+            SIM_ConfigCheck_SetSource(&sCheck, "LAN", "ServerIp", line, "from [Net]");
+        }
     }
+    return 1;
 }
 
 static const char * BoolToString(BOOL arg)
@@ -326,16 +361,28 @@ static const char * BoolToString(BOOL arg)
     return ret;
 }
 
-static BOOL StringToBool(const char * str)
+static BOOL ParseBool(const char *value, BOOL *out)
 {
-    BOOL ret = FALSE;
-
-    if(strcmp(str, "false") == 0) {
-        ret = FALSE;
-    } else if(strcmp(str, "true") == 0) {
-        ret = TRUE;
+    if (strcmp(value, "true") == 0 || strcmp(value, "false") == 0) {
+        *out = value[0] == 't';
+        return TRUE;
     }
-    return ret;
+    SIM_ConfigCheck_BadValue(&sCheck, sSection, sName, value, sLine, "true or false");
+    return FALSE;
+}
+
+static BOOL ParseInt(const char *value, int *out)
+{
+    char *end;
+    errno = 0;
+    long number = strtol(value, &end, 10);
+    while (isspace((unsigned char)*end)) ++end;
+    if (end == value || *end || errno || number < INT_MIN || number > INT_MAX) {
+        SIM_ConfigCheck_BadValue(&sCheck, sSection, sName, value, sLine, "a whole number");
+        return FALSE;
+    }
+    *out = (int)number;
+    return TRUE;
 }
 
 static const char * ScreenLayoutTypeToString(SIM_config_screen_layout_type layout)
@@ -382,7 +429,23 @@ static SIM_config_screen_layout_type StringToScreenLayoutType(const char * str)
 // Loads the configuration file. If it does not exist, return false
 BOOL SIM_Config_LoadConfigFile(SIM_config_type * aConfig)
 {
-    return (ini_parse(SIM_CONFIG_FILE_PATH, IniHandler, aConfig) >= 0);
+    SIM_ConfigText text = { 0 };
+    WriteConfig(&text, aConfig);
+    SIM_ConfigCheck_Init(&sCheck, SIM_CONFIG_FILE_PATH, SIM_ConfigText_Get(&text), sLegacyKeys, sizeof(sLegacyKeys) / sizeof(sLegacyKeys[0]));
+    SIM_ConfigText_Free(&text);
+
+    int result = ini_parse(SIM_CONFIG_FILE_PATH, IniHandler, aConfig);
+    SIM_ConfigCheck_ParseResult(&sCheck, result, "it is ignored (later such lines are not reported)");
+    return result >= 0;
+}
+
+void SIM_Config_PrintEffective(const SIM_config_type *aConfig, FILE *out)
+{
+    SIM_ConfigText text = { 0 };
+    WriteConfig(&text, aConfig);
+    fprintf(out, "; %s\n", SIM_CONFIG_FILE_PATH + 2);
+    SIM_ConfigCheck_Print(&sCheck, SIM_ConfigText_Get(&text), out);
+    SIM_ConfigText_Free(&text);
 }
 
 // Initialize a SIM_config_type to default values
@@ -481,112 +544,115 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     strcpy(aConfig->netSettings.serverIp, "127.0.0.1");
 }
 
-// Save a SIM_config_type to the configuration file
-void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
+// Writes every key, also to tell SIM_ConfigCheck which keys the file has
+static void WriteConfig(SIM_ConfigText *configFile, const SIM_config_type *aConfig)
 {
-    FILE * configFile = fopen(SIM_CONFIG_FILE_PATH, "w");
-    if (!configFile) return;
-
-    fprintf(configFile, "[Interface]\n");
-    fprintf(configFile, "MenuScalePercent=%d\n", aConfig->menuScalePercent);
-    fprintf(configFile, "PauseWhileOpen=%s\n\n", BoolToString(aConfig->pauseWhileMenuOpen));
+    SIM_ConfigText_Printf(configFile, "[Interface]\n");
+    SIM_ConfigText_Printf(configFile, "MenuScalePercent=%d\n", aConfig->menuScalePercent);
+    SIM_ConfigText_Printf(configFile, "PauseWhileOpen=%s\n\n", BoolToString(aConfig->pauseWhileMenuOpen));
     
-    fprintf(configFile, "[General]\n");
-    fprintf(configFile, "InternalResolutionScale=%d\n", aConfig->internalResolutionScale);
-    fprintf(configFile, "MasterVolume=%d\n", aConfig->masterVolume);
-    fprintf(configFile, "WindowHeight=%d\n", aConfig->windowHeight);
-    fprintf(configFile, "WindowWidth=%d\n", aConfig->windowWidth);
-    fprintf(configFile, "FullScreen=%s\n", BoolToString(aConfig->fullScreen));
+    SIM_ConfigText_Printf(configFile, "[General]\n");
+    SIM_ConfigText_Printf(configFile, "InternalResolutionScale=%d\n", aConfig->internalResolutionScale);
+    SIM_ConfigText_Printf(configFile, "MasterVolume=%d\n", aConfig->masterVolume);
+    SIM_ConfigText_Printf(configFile, "WindowHeight=%d\n", aConfig->windowHeight);
+    SIM_ConfigText_Printf(configFile, "WindowWidth=%d\n", aConfig->windowWidth);
+    SIM_ConfigText_Printf(configFile, "FullScreen=%s\n", BoolToString(aConfig->fullScreen));
 
     const char * screenLayoutString = ScreenLayoutTypeToString(aConfig->screenLayout);
-    fprintf(configFile, "ScreenLayout=%s\n", screenLayoutString);
-    fprintf(configFile, "SwapScreens=%s\n", BoolToString(aConfig->swapScreens));
-    fprintf(configFile, "VsyncInterval=%d\n", aConfig->vsyncInterval);
-    fprintf(configFile, "CapFrameRate=%s\n", BoolToString(aConfig->capFrameRate));
-    fprintf(configFile, "FastForwardMultiplier=%.6g\n",
+    SIM_ConfigText_Printf(configFile, "ScreenLayout=%s\n", screenLayoutString);
+    SIM_ConfigText_Printf(configFile, "SwapScreens=%s\n", BoolToString(aConfig->swapScreens));
+    SIM_ConfigText_Printf(configFile, "VsyncInterval=%d\n", aConfig->vsyncInterval);
+    SIM_ConfigText_Printf(configFile, "CapFrameRate=%s\n", BoolToString(aConfig->capFrameRate));
+    SIM_ConfigText_Printf(configFile, "FastForwardMultiplier=%.6g\n",
         SIM_Config_ValidateFastForwardMultiplier(aConfig->fastForwardMultiplier));
-    fprintf(configFile, "MacAddr=%02x%02x%02x%02x%02x%02x\n", aConfig->macAddr[0],
+    SIM_ConfigText_Printf(configFile, "MacAddr=%02x%02x%02x%02x%02x%02x\n", aConfig->macAddr[0],
                                                               aConfig->macAddr[1],
                                                               aConfig->macAddr[2],
                                                               aConfig->macAddr[3],
                                                               aConfig->macAddr[4],
                                                               aConfig->macAddr[5]);
-    fprintf(configFile, "\n");
+    SIM_ConfigText_Printf(configFile, "\n");
 
-    fprintf(configFile, "[PAD]\n");
-    fprintf(configFile, "JoyAxisDeadzone=%d\n", aConfig->padSettings.joyAxisDeadzone);
-    fprintf(configFile, "AKey=%d\n", aConfig->padSettings.aKey);
-    fprintf(configFile, "BKey=%d\n", aConfig->padSettings.bKey);
-    fprintf(configFile, "XKey=%d\n", aConfig->padSettings.xKey);
-    fprintf(configFile, "YKey=%d\n", aConfig->padSettings.yKey);
-    fprintf(configFile, "UpKey=%d\n", aConfig->padSettings.upKey);
-    fprintf(configFile, "DownKey=%d\n", aConfig->padSettings.downKey);
-    fprintf(configFile, "LeftKey=%d\n", aConfig->padSettings.leftKey);
-    fprintf(configFile, "RightKey=%d\n", aConfig->padSettings.rightKey);
-    fprintf(configFile, "LKey=%d\n", aConfig->padSettings.lKey);
-    fprintf(configFile, "RKey=%d\n", aConfig->padSettings.rKey);
-    fprintf(configFile, "StartKey=%d\n", aConfig->padSettings.startKey);
-    fprintf(configFile, "SelectKey=%d\n", aConfig->padSettings.selectKey);
-    fprintf(configFile, "GUIKey=%d\n", aConfig->padSettings.guiKey);
-    fprintf(configFile, "FastForwardKey=%d\n", aConfig->padSettings.fastForwardKey);
-    fprintf(configFile, "FullScreenKey=%d\n", aConfig->padSettings.fullScreenKey);
-    fprintf(configFile, "AJoyKey=%d\n", aConfig->padSettings.aJoyKey);
-    fprintf(configFile, "BJoyKey=%d\n", aConfig->padSettings.bJoyKey);
-    fprintf(configFile, "XJoyKey=%d\n", aConfig->padSettings.xJoyKey);
-    fprintf(configFile, "YJoyKey=%d\n", aConfig->padSettings.yJoyKey);
-    fprintf(configFile, "UpJoyKey=%d\n", aConfig->padSettings.upJoyKey);
-    fprintf(configFile, "UpJoyKeySecondary=%d\n", aConfig->padSettings.upJoyKeySecondary);
-    fprintf(configFile, "DownJoyKey=%d\n", aConfig->padSettings.downJoyKey);
-    fprintf(configFile, "DownJoyKeySecondary=%d\n", aConfig->padSettings.downJoyKeySecondary);
-    fprintf(configFile, "LeftJoyKey=%d\n", aConfig->padSettings.leftJoyKey);
-    fprintf(configFile, "LeftJoyKeySecondary=%d\n", aConfig->padSettings.leftJoyKeySecondary);
-    fprintf(configFile, "RightJoyKey=%d\n", aConfig->padSettings.rightJoyKey);
-    fprintf(configFile, "RightJoyKeySecondary=%d\n", aConfig->padSettings.rightJoyKeySecondary);
-    fprintf(configFile, "LJoyKey=%d\n", aConfig->padSettings.lJoyKey);
-    fprintf(configFile, "RJoyKey=%d\n", aConfig->padSettings.rJoyKey);
-    fprintf(configFile, "StartJoyKey=%d\n", aConfig->padSettings.startJoyKey);
-    fprintf(configFile, "SelectJoyKey=%d\n", aConfig->padSettings.selectJoyKey);
-    fprintf(configFile, "\n");
+    SIM_ConfigText_Printf(configFile, "[PAD]\n");
+    SIM_ConfigText_Printf(configFile, "JoyAxisDeadzone=%d\n", aConfig->padSettings.joyAxisDeadzone);
+    SIM_ConfigText_Printf(configFile, "AKey=%d\n", aConfig->padSettings.aKey);
+    SIM_ConfigText_Printf(configFile, "BKey=%d\n", aConfig->padSettings.bKey);
+    SIM_ConfigText_Printf(configFile, "XKey=%d\n", aConfig->padSettings.xKey);
+    SIM_ConfigText_Printf(configFile, "YKey=%d\n", aConfig->padSettings.yKey);
+    SIM_ConfigText_Printf(configFile, "UpKey=%d\n", aConfig->padSettings.upKey);
+    SIM_ConfigText_Printf(configFile, "DownKey=%d\n", aConfig->padSettings.downKey);
+    SIM_ConfigText_Printf(configFile, "LeftKey=%d\n", aConfig->padSettings.leftKey);
+    SIM_ConfigText_Printf(configFile, "RightKey=%d\n", aConfig->padSettings.rightKey);
+    SIM_ConfigText_Printf(configFile, "LKey=%d\n", aConfig->padSettings.lKey);
+    SIM_ConfigText_Printf(configFile, "RKey=%d\n", aConfig->padSettings.rKey);
+    SIM_ConfigText_Printf(configFile, "StartKey=%d\n", aConfig->padSettings.startKey);
+    SIM_ConfigText_Printf(configFile, "SelectKey=%d\n", aConfig->padSettings.selectKey);
+    SIM_ConfigText_Printf(configFile, "GUIKey=%d\n", aConfig->padSettings.guiKey);
+    SIM_ConfigText_Printf(configFile, "FastForwardKey=%d\n", aConfig->padSettings.fastForwardKey);
+    SIM_ConfigText_Printf(configFile, "FullScreenKey=%d\n", aConfig->padSettings.fullScreenKey);
+    SIM_ConfigText_Printf(configFile, "AJoyKey=%d\n", aConfig->padSettings.aJoyKey);
+    SIM_ConfigText_Printf(configFile, "BJoyKey=%d\n", aConfig->padSettings.bJoyKey);
+    SIM_ConfigText_Printf(configFile, "XJoyKey=%d\n", aConfig->padSettings.xJoyKey);
+    SIM_ConfigText_Printf(configFile, "YJoyKey=%d\n", aConfig->padSettings.yJoyKey);
+    SIM_ConfigText_Printf(configFile, "UpJoyKey=%d\n", aConfig->padSettings.upJoyKey);
+    SIM_ConfigText_Printf(configFile, "UpJoyKeySecondary=%d\n", aConfig->padSettings.upJoyKeySecondary);
+    SIM_ConfigText_Printf(configFile, "DownJoyKey=%d\n", aConfig->padSettings.downJoyKey);
+    SIM_ConfigText_Printf(configFile, "DownJoyKeySecondary=%d\n", aConfig->padSettings.downJoyKeySecondary);
+    SIM_ConfigText_Printf(configFile, "LeftJoyKey=%d\n", aConfig->padSettings.leftJoyKey);
+    SIM_ConfigText_Printf(configFile, "LeftJoyKeySecondary=%d\n", aConfig->padSettings.leftJoyKeySecondary);
+    SIM_ConfigText_Printf(configFile, "RightJoyKey=%d\n", aConfig->padSettings.rightJoyKey);
+    SIM_ConfigText_Printf(configFile, "RightJoyKeySecondary=%d\n", aConfig->padSettings.rightJoyKeySecondary);
+    SIM_ConfigText_Printf(configFile, "LJoyKey=%d\n", aConfig->padSettings.lJoyKey);
+    SIM_ConfigText_Printf(configFile, "RJoyKey=%d\n", aConfig->padSettings.rJoyKey);
+    SIM_ConfigText_Printf(configFile, "StartJoyKey=%d\n", aConfig->padSettings.startJoyKey);
+    SIM_ConfigText_Printf(configFile, "SelectJoyKey=%d\n", aConfig->padSettings.selectJoyKey);
+    SIM_ConfigText_Printf(configFile, "\n");
 
-    fprintf(configFile, "[OSNVRAM]\n");
-    fprintf(configFile, "Owner_FavoriteColor=%d\n", aConfig->osNvramConfig.ncd.owner.favoriteColor);
-    fprintf(configFile, "Owner_BirthdayMonth=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.month);
-    fprintf(configFile, "Owner_BirthdayDay=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.day);
-    fprintf(configFile, "Owner_Nickname=%ls\n", aConfig->osNvramConfig.ncd.owner.nickname.str);
-    fprintf(configFile, "Owner_Comment=%ls\n", aConfig->osNvramConfig.ncd.owner.comment.str);
-    fprintf(configFile, "Alarm_Hour=%d\n", aConfig->osNvramConfig.ncd.alarm.hour);
-    fprintf(configFile, "Alarm_Minute=%d\n", aConfig->osNvramConfig.ncd.alarm.minute);
-    fprintf(configFile, "Alarm_Second=%d\n", aConfig->osNvramConfig.ncd.alarm.second);
-    fprintf(configFile, "Alarm_DaysOfWeek=%d\n", aConfig->osNvramConfig.ncd.alarm.enableWeek);
-    fprintf(configFile, "Alarm_Enabled=%s\n", BoolToString(aConfig->osNvramConfig.ncd.alarm.alarmOn));
-    fprintf(configFile, "TP_RawX1=%d\n", aConfig->osNvramConfig.ncd.tp.raw_x1);
-    fprintf(configFile, "TP_RawY1=%d\n", aConfig->osNvramConfig.ncd.tp.raw_y1);
-    fprintf(configFile, "TP_dx1=%d\n", aConfig->osNvramConfig.ncd.tp.dx1);
-    fprintf(configFile, "TP_dy1=%d\n", aConfig->osNvramConfig.ncd.tp.dy1);
-    fprintf(configFile, "TP_RawX2=%d\n", aConfig->osNvramConfig.ncd.tp.raw_x2);
-    fprintf(configFile, "TP_RawY2=%d\n", aConfig->osNvramConfig.ncd.tp.raw_y2);
-    fprintf(configFile, "TP_dx2=%d\n", aConfig->osNvramConfig.ncd.tp.dx2);
-    fprintf(configFile, "TP_dy2=%d\n", aConfig->osNvramConfig.ncd.tp.dy2);
-    fprintf(configFile, "Option_Language=%d\n", aConfig->osNvramConfig.ncd.option.language);
-    fprintf(configFile, "Option_AGBLCD=%d\n", aConfig->osNvramConfig.ncd.option.agbLcd);
-    fprintf(configFile, "Option_PullOutCardFlag=%d\n", aConfig->osNvramConfig.ncd.option.detectPullOutCardFlag);
-    fprintf(configFile, "Option_PullOutCtrdgFlag=%d\n", aConfig->osNvramConfig.ncd.option.detectPullOutCtrdgFlag);
-    fprintf(configFile, "Option_AutoBootFlag=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.autoBootFlag));
-    fprintf(configFile, "Option_FavoriteColorSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_favoriteColor));
-    fprintf(configFile, "Option_TouchPanelCalibrated=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_tp));
-    fprintf(configFile, "Option_LanguageSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_language));
-    fprintf(configFile, "Option_RTCSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_rtc));
-    fprintf(configFile, "Option_NicknameSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_nickname));
-    fprintf(configFile, "Option_Timezone=%d\n", aConfig->osNvramConfig.ncd.option.timezone);
-    fprintf(configFile, "Option_RTCClockAdjust=%d\n", aConfig->osNvramConfig.ncd.option.rtcClockAdjust);
-    fprintf(configFile, "Option_RTCOffset=%d\n", aConfig->osNvramConfig.ncd.option.rtcOffset);
-    fprintf(configFile, "\n");
-    fprintf(configFile, "[LAN]\n");
-    fprintf(configFile, "ServerIp=%s\n", aConfig->netSettings.serverIp);
-    fprintf(configFile, "\n");
+    SIM_ConfigText_Printf(configFile, "[OSNVRAM]\n");
+    SIM_ConfigText_Printf(configFile, "Owner_FavoriteColor=%d\n", aConfig->osNvramConfig.ncd.owner.favoriteColor);
+    SIM_ConfigText_Printf(configFile, "Owner_BirthdayMonth=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.month);
+    SIM_ConfigText_Printf(configFile, "Owner_BirthdayDay=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.day);
+    SIM_ConfigText_Printf(configFile, "Owner_Nickname=%ls\n", aConfig->osNvramConfig.ncd.owner.nickname.str);
+    SIM_ConfigText_Printf(configFile, "Owner_Comment=%ls\n", aConfig->osNvramConfig.ncd.owner.comment.str);
+    SIM_ConfigText_Printf(configFile, "Alarm_Hour=%d\n", aConfig->osNvramConfig.ncd.alarm.hour);
+    SIM_ConfigText_Printf(configFile, "Alarm_Minute=%d\n", aConfig->osNvramConfig.ncd.alarm.minute);
+    SIM_ConfigText_Printf(configFile, "Alarm_Second=%d\n", aConfig->osNvramConfig.ncd.alarm.second);
+    SIM_ConfigText_Printf(configFile, "Alarm_DaysOfWeek=%d\n", aConfig->osNvramConfig.ncd.alarm.enableWeek);
+    SIM_ConfigText_Printf(configFile, "Alarm_Enabled=%s\n", BoolToString(aConfig->osNvramConfig.ncd.alarm.alarmOn));
+    SIM_ConfigText_Printf(configFile, "TP_RawX1=%d\n", aConfig->osNvramConfig.ncd.tp.raw_x1);
+    SIM_ConfigText_Printf(configFile, "TP_RawY1=%d\n", aConfig->osNvramConfig.ncd.tp.raw_y1);
+    SIM_ConfigText_Printf(configFile, "TP_dx1=%d\n", aConfig->osNvramConfig.ncd.tp.dx1);
+    SIM_ConfigText_Printf(configFile, "TP_dy1=%d\n", aConfig->osNvramConfig.ncd.tp.dy1);
+    SIM_ConfigText_Printf(configFile, "TP_RawX2=%d\n", aConfig->osNvramConfig.ncd.tp.raw_x2);
+    SIM_ConfigText_Printf(configFile, "TP_RawY2=%d\n", aConfig->osNvramConfig.ncd.tp.raw_y2);
+    SIM_ConfigText_Printf(configFile, "TP_dx2=%d\n", aConfig->osNvramConfig.ncd.tp.dx2);
+    SIM_ConfigText_Printf(configFile, "TP_dy2=%d\n", aConfig->osNvramConfig.ncd.tp.dy2);
+    SIM_ConfigText_Printf(configFile, "Option_Language=%d\n", aConfig->osNvramConfig.ncd.option.language);
+    SIM_ConfigText_Printf(configFile, "Option_AGBLCD=%d\n", aConfig->osNvramConfig.ncd.option.agbLcd);
+    SIM_ConfigText_Printf(configFile, "Option_PullOutCardFlag=%d\n", aConfig->osNvramConfig.ncd.option.detectPullOutCardFlag);
+    SIM_ConfigText_Printf(configFile, "Option_PullOutCtrdgFlag=%d\n", aConfig->osNvramConfig.ncd.option.detectPullOutCtrdgFlag);
+    SIM_ConfigText_Printf(configFile, "Option_AutoBootFlag=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.autoBootFlag));
+    SIM_ConfigText_Printf(configFile, "Option_FavoriteColorSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_favoriteColor));
+    SIM_ConfigText_Printf(configFile, "Option_TouchPanelCalibrated=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_tp));
+    SIM_ConfigText_Printf(configFile, "Option_LanguageSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_language));
+    SIM_ConfigText_Printf(configFile, "Option_RTCSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_rtc));
+    SIM_ConfigText_Printf(configFile, "Option_NicknameSet=%s\n", BoolToString(aConfig->osNvramConfig.ncd.option.input_nickname));
+    SIM_ConfigText_Printf(configFile, "Option_Timezone=%d\n", aConfig->osNvramConfig.ncd.option.timezone);
+    SIM_ConfigText_Printf(configFile, "Option_RTCClockAdjust=%d\n", aConfig->osNvramConfig.ncd.option.rtcClockAdjust);
+    SIM_ConfigText_Printf(configFile, "Option_RTCOffset=%lld\n", (long long)aConfig->osNvramConfig.ncd.option.rtcOffset);
+    SIM_ConfigText_Printf(configFile, "\n");
+    SIM_ConfigText_Printf(configFile, "[LAN]\n");
+    SIM_ConfigText_Printf(configFile, "ServerIp=%s\n", aConfig->netSettings.serverIp);
+    SIM_ConfigText_Printf(configFile, "\n");
+}
 
-    
-    fclose(configFile);
+// Save a SIM_config_type to the configuration file
+void SIM_Config_SaveConfigFile(SIM_config_type * aConfig)
+{
+    SIM_ConfigText text = { 0 };
+    WriteConfig(&text, aConfig);
+    SIM_ConfigText_Save(&text, SIM_CONFIG_FILE_PATH);
+    SIM_ConfigText_Free(&text);
 }
 
 void SIM_Config_SetOSNVRAMConfig(SIM_config_type * aConfig)
