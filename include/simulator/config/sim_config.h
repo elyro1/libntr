@@ -72,6 +72,9 @@ typedef struct {
     float fastForwardMultiplier; /* Speed while holding the fast-forward key, from 1x to 10x. */
     int menuScalePercent; /* 0: automatic; otherwise 100-200 percent in steps of 25. */
     BOOL pauseWhileMenuOpen;
+    BOOL writeLogFile; /* Copy stdout and stderr into log.txt */
+    BOOL crashHandler; /* Write crash reports to log.txt */
+    int stallWatchdogSeconds; /* Report when no frame is shown for this long; 0 turns it off */
     u8 macAddr[6]; /* MAC address */
     SIM_config_pad_settings_type padSettings; /* Input pad settings */
     NVRAMConfig osNvramConfig; /* OS NVRAM config */

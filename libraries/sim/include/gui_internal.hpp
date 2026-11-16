@@ -4,6 +4,7 @@
 namespace SIM::GUI {
 void GeneralContents();
 void DeveloperLayoutContents();
+void DiagnosticsContents();
 void GraphicsTimingContents();
 void FastForwardContents();
 void AppNetInit();

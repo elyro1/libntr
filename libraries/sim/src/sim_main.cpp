@@ -36,6 +36,7 @@ extern "C" int NitroSpMain(void *arg);
 #include <simulator/sim.h>
 #include <simulator/sim_3d_target.hpp>
 #include <simulator/sim_bloom.hpp>
+#include <simulator/sim_crash.h>
 #include <simulator/sim_field_coverage.hpp>
 #include <simulator/sim_audio.h>
 #include <simulator/sim_frame_pacer.h>
@@ -1912,6 +1913,7 @@ extern "C" void SIM_Autopilot_Frame(void);
 extern "C" void SIM_Autopilot_BeforeSwap(int width, int height);
 
 void *SIM_Render(void *arg) {
+  SIM_Crash_SetPhase("render");
 
   SDL_Event Event;
   int x;
@@ -2413,7 +2415,9 @@ void *SIM_Render(void *arg) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
+    SIM_Crash_Heartbeat();
   } while (SIM::GUI::IsGameLogicPaused());
+  SIM_Crash_SetPhase("game");
   // Bind 3D Framebuffer & Renderbuffer
   glBindFramebuffer(GL_FRAMEBUFFER, s3DTarget.DrawFramebuffer(g3FrameBuffer));
   glBindRenderbuffer(GL_RENDERBUFFER, g3RenderBufferId);
@@ -2538,6 +2542,9 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
+  if (s_SIM_config.writeLogFile) SIM_Log_Open();
+  SIM_Crash_Install(s_SIM_config.crashHandler, s_SIM_config.stallWatchdogSeconds);
+
   // Initialize Nitro registers
   s_reg_PAD_KEYINPUT = 0x3ff;
   *(vu16 *)HW_BUTTON_XY_BUF = 0b0111110000000000;
@@ -2631,6 +2638,15 @@ int main(int argc, char *argv[]) {
 #endif
 
   SIM_RenderInit(NULL);
+  if (FILE *log = SIM_Log_File()) {
+    // glGetString is a null pointer when no context could be made
+    if (glGetString) {
+      fprintf(log, "[log] renderer: %s, OpenGL %s\n", SIM_GetGraphicsRenderer(), (const char *)glGetString(GL_VERSION));
+    } else {
+      fprintf(log, "[log] renderer: no OpenGL context\n");
+    }
+    fflush(log);
+  }
   G3SIM_DrawInit();
   atexit([] { sFieldCoverage.Destroy(); s3DTarget.Destroy(); G3SIM_ClearTextureCache(); });
 

@@ -57,6 +57,30 @@ void DeveloperLayoutContents() {
     if (changed) SIM_Config_SaveConfigFile(config);
 }
 
+void DiagnosticsContents() {
+    auto *config = SIM_GetConfigPtr();
+    bool changed = false;
+    ImGui::SeparatorText("Diagnostics");
+    if (!BeginSettings("DiagnosticsSettings")) return;
+    SettingsRow("Write log.txt", "Copies the game's output into log.txt; the previous run's goes to log.prev.txt. "
+        "Takes effect on the next start.");
+    bool log = config->writeLogFile;
+    if (ImGui::Checkbox("##WriteLog", &log)) { config->writeLogFile = log; changed = true; }
+    SettingsRow("Crash reports", "Writes a stack trace and the game state to log.txt when the game crashes. "
+        "Takes effect on the next start.");
+    bool crash = config->crashHandler;
+    if (ImGui::Checkbox("##CrashHandler", &crash)) { config->crashHandler = crash; changed = true; }
+    SettingsRow("Stall reports", "Logs what the game is doing when no frame is shown for this long. "
+        "Takes effect on the next start.");
+    int stall = config->stallWatchdogSeconds;
+    if (ImGui::SliderInt("##StallSeconds", &stall, 0, 30, stall ? "after %d s" : "Off")) {
+        config->stallWatchdogSeconds = stall;
+        changed = true;
+    }
+    ImGui::EndTable();
+    if (changed) SIM_Config_SaveConfigFile(config);
+}
+
 void GraphicsTimingContents() {
     auto *config = SIM_GetConfigPtr();
     bool changed = false;

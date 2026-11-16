@@ -148,6 +148,19 @@ static int IniHandler(void* user, const char* section, const char* name,
         }
     }
 
+    if(MATCH("Diagnostics", "WriteLogFile")) {
+        SET_BOOL(config->writeLogFile);
+    }
+    if(MATCH("Diagnostics", "CrashHandler")) {
+        SET_BOOL(config->crashHandler);
+    }
+    if(MATCH("Diagnostics", "StallWatchdogSeconds")) {
+        int seconds = config->stallWatchdogSeconds;
+        if (ParseInt(value, &seconds)) {
+            config->stallWatchdogSeconds = seconds < 0 ? 0 : (seconds > 600 ? 600 : seconds);
+        }
+    }
+
     // PAD
     if(MATCH("PAD", "JoyAxisDeadzone")) {
         char *end;
@@ -493,6 +506,9 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->fastForwardMultiplier = 5.0f;
     aConfig->menuScalePercent = 0;
     aConfig->pauseWhileMenuOpen = FALSE;
+    aConfig->writeLogFile = TRUE;
+    aConfig->crashHandler = TRUE;
+    aConfig->stallWatchdogSeconds = 5;
 
     aConfig->padSettings.joyAxisDeadzone = SIM_CONFIG_JOY_DEFAULT_DEADZONE;
     aConfig->padSettings.upJoyKeySecondary = SIM_CONFIG_JOY_AXIS_MINUS_MASK | 1;
@@ -588,6 +604,12 @@ static void WriteConfig(SIM_ConfigText *configFile, const SIM_config_type *aConf
                                                               aConfig->macAddr[3],
                                                               aConfig->macAddr[4],
                                                               aConfig->macAddr[5]);
+    SIM_ConfigText_Printf(configFile, "\n");
+
+    SIM_ConfigText_Printf(configFile, "[Diagnostics]\n");
+    SIM_ConfigText_Printf(configFile, "WriteLogFile=%s\n", BoolToString(aConfig->writeLogFile));
+    SIM_ConfigText_Printf(configFile, "CrashHandler=%s\n", BoolToString(aConfig->crashHandler));
+    SIM_ConfigText_Printf(configFile, "StallWatchdogSeconds=%d\n", aConfig->stallWatchdogSeconds);
     SIM_ConfigText_Printf(configFile, "\n");
 
     SIM_ConfigText_Printf(configFile, "[PAD]\n");

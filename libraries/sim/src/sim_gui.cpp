@@ -166,6 +166,7 @@ static void DeveloperContents() {
     ImGui::Checkbox("Manual pause", &sManualPause);
     ImGui::TextWrapped("Manual pause stays active after closing settings.");
     DeveloperLayoutContents();
+    DiagnosticsContents();
     ProjectPage(Page::Developer);
     ImGui::SeparatorText("Build");
     ImGui::TextWrapped("libntr: %s", SIM_GetLibntrGitHash());
