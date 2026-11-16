@@ -2,6 +2,7 @@ subdir('src')
 
 if (build_target == 'arm')
 libsnd = library('snd',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -9,6 +10,7 @@ libsnd = library('snd',
 )
 
 libsnd_arm7 = library('snd_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -17,6 +19,7 @@ libsnd_arm7 = library('snd_arm7',
 )
 else
 libsnd = library('snd',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: build_target == 'nx',

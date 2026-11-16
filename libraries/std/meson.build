@@ -4,6 +4,7 @@ libstd_includes = include_directories('include')
 
 if (build_target == 'arm')
 libstd = library('std',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libstd_includes],
     pic: false,
@@ -11,6 +12,7 @@ libstd = library('std',
 )
 else
 libstd = library('std',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libstd_includes],
     pic: build_target == 'nx',

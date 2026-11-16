@@ -25,7 +25,7 @@ makelcf_exe = executable('makelcf',
         'misc.c',
         generated_sources
     ],
-    c_args: '-DSDK_WIN32',
+    c_args: ['-DSDK_WIN32', nitrosdk_quiet_args],
     include_directories: [
         nitrosdk_includes,
         include_nitro

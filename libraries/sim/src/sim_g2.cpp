@@ -436,7 +436,6 @@ static inline bool G2SIM_IsObjExt(u32 num, u8 isSub) {
 void G2SIM_DrawOBJ(u32 line, u8 isSub, int bgnum, BOOL fieldOnly) {
   u32 dispcnt;
   u16 *oam;
-  u8 *pixelBuf;
   if (isSub) {
     dispcnt = s_reg_GXS_DB_DISPCNT;
     oam = (u16 *)s_HW_DB_OAM;
@@ -610,7 +609,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
   TracyCZone(ctx, 1);
 #endif
   u8 *bgvram = (u8 *)s_HW_BG_VRAM;
-  u8 *pixelBuf;
+  u8 *pixelBuf = NULL;
   u32 tilesetaddr;
   u32 tilemapaddr;
   u32 bgvrammask = isSub ? 0x1FFFF : 0x7FFFF;
@@ -628,8 +627,6 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
 
   REGType16v bgcnt;
   REGType32v dispcnt;
-  u8 dispSel;
-  dispSel = s_reg_GX_POWCNT >> 15;
   if (isSub) {
     switch (bgnum) {
     case 0:
@@ -690,7 +687,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
   xoff += (offset & 0x1ff) + extraX;
   yoff += (offset >> 16) & 0x1ff;
 
-  u16 *curpal;
+  u16 *curpal = NULL;
   u16 *pal;
   u32 extpal, extpalslot;
 
@@ -719,9 +716,9 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
     tilemapaddr += ((yoff & 0xF8) << 3);
   }
 
-  u16 curtile;
+  u16 curtile = 0;
 
-  u32 pixelsaddr;
+  u32 pixelsaddr = 0;
 
   if (bgcnt & 0x0080) {
     // 256 color
@@ -736,7 +733,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
 
         if (isSub) {
           curpal =
-              (u16 *)(getBgExtPlttVramBank(isSub) + (extpalslot * SlotSize) +
+              (u16 *)((u8 *)getBgExtPlttVramBank(isSub) + (extpalslot * SlotSize) +
                       ((curtile >> 12) * PaletteSize));
         } else {
           curpal = (u16 *)getBgExtPlttVramBank(isSub);
@@ -773,7 +770,7 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
 
           if (isSub) {
             curpal =
-                (u16 *)(getBgExtPlttVramBank(isSub) + (extpalslot * SlotSize) +
+                (u16 *)((u8 *)getBgExtPlttVramBank(isSub) + (extpalslot * SlotSize) +
                         ((curtile >> 12) * PaletteSize));
           } else {
             curpal = (u16 *)getBgExtPlttVramBank(isSub);
@@ -844,11 +841,6 @@ static void DrawBGLine_Text(u32 line, u32 bgnum, u8 mosaic, u8 isSub, u8 *altern
         }
       }
 
-      if (curtile != 0) {
-        u32 temp;
-        temp = 1;
-      }
-
       u32 tilexoff = (curtile & 0x0400) ? (7 - (xpos & 0x7)) : (xpos & 0x7);
       if (tilexoff & 0x1) {
         color = bgvram[(pixelsaddr + (tilexoff >> 1)) & bgvrammask] >> 4;
@@ -885,15 +877,11 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
 
   u32 coordmask;
   u32 yshift;
-  u8 dispSel;
-  dispSel = s_reg_GX_POWCNT >> 15;
 
   REGType16v bgcnt;
 
   s16 rotA;
-  s16 rotB;
   s16 rotC;
-  s16 rotD;
 
   s32 rotX;
   s32 rotY;
@@ -943,9 +931,7 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   }
   const ScanlineAffine &affine = s_ScanlineAffine[isSub][line][bgnum - 2];
   rotA = affine.a;
-  rotB = affine.b;
   rotC = affine.c;
-  rotD = affine.d;
   rotX = affine.x;
   rotY = affine.y;
 
@@ -999,7 +985,7 @@ static void DrawBGLine_Affine(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
   yshift -= 3;
 
   for (int i = 0; i < 256; i++) {
-    if (1 << bgnum) {
+    {
       s32 finalX;
       s32 finalY;
       if (mosaic) {
@@ -1049,26 +1035,17 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
 #endif
   u32 tilesetaddr;
   u32 tilemapaddr;
-  u16 *pal;
+  u16 *pal = NULL;
   u8 *pixelBuf;
 
-  u32 coordmask;
-  u32 yshift;
-  u8 dispSel;
-  dispSel = s_reg_GX_POWCNT >> 15;
 
   REGType16v bgcnt;
   REGType32v dispcnt = isSub ? s_reg_GXS_DB_DISPCNT : s_reg_GX_DISPCNT;
   u32 extpal = dispcnt & 0x40000000;
-  u32 extpalslot;
-  if (extpal) {
-    extpalslot = ((bgnum < 2) && (bgcnt & 0x2000)) ? (2 + bgnum) : bgnum;
-  }
+  u32 extpalslot = 0;
 
   s16 rotA;
-  s16 rotB;
   s16 rotC;
-  s16 rotD;
 
   s32 rotX;
   s32 rotY;
@@ -1120,11 +1097,13 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
     }
   }
 
+  if (extpal) {
+    extpalslot = ((bgnum < 2) && (bgcnt & 0x2000)) ? (2 + bgnum) : bgnum;
+  }
+
   const ScanlineAffine &affine = s_ScanlineAffine[isSub][line][bgnum - 2];
   rotA = affine.a;
-  rotB = affine.b;
   rotC = affine.c;
-  rotD = affine.d;
   rotX = affine.x;
   rotY = affine.y;
 
@@ -1175,7 +1154,7 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       u16 color;
 
       for (int i = 0; i < 256; i++) {
-        if ((1 << bgnum)) {
+        {
           s32 finalX, finalY;
           if (mosaic) {
             int im;
@@ -1218,7 +1197,7 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
       u8 color;
 
       for (int i = 0; i < 256; i++) {
-        if ((1 << bgnum)) {
+        {
           s32 finalX, finalY;
           if (mosaic) {
             int im;
@@ -1296,7 +1275,7 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
     yshift -= 3;
 
     for (int i = 0; i < 256; i++) {
-      if ((1 << bgnum)) {
+      {
         s32 finalX, finalY;
         if (mosaic) {
           int im = 7;
@@ -1320,12 +1299,12 @@ static void DrawBGLine_Extended(u32 line, u32 bgnum, u8 mosaic, u8 isSub) {
             const u32 SlotSize = PaletteSize * 16;
 
             if (isSub) {
-              curpal = (u16 *)(getBgExtPlttVramBank(isSub) +
+              curpal = (u16 *)((u8 *)getBgExtPlttVramBank(isSub) +
                                (extpalslot * SlotSize) +
                                ((curtile >> 12) * PaletteSize));
             } else {
               curpal =
-                  (u16 *)(getBgExtPlttVramBank(isSub) + (bgnum * SlotSize) +
+                  (u16 *)((u8 *)getBgExtPlttVramBank(isSub) + (bgnum * SlotSize) +
                           ((curtile >> 12) * PaletteSize));
             }
           } else {
@@ -1784,7 +1763,6 @@ static void DrawOBJ_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos,
     } else {
       pixelsaddr <<= 5;
       pixelsaddr += ((ypos & 0x7) << 2);
-      s32 pixelstride;
 
       if (!window) {
         pixelattr |= 0x1000;
@@ -1797,11 +1775,9 @@ static void DrawOBJ_Normal(u32 num, u32 width, u32 height, s32 xpos, s32 ypos,
         pixelsaddr += (((width - 1) & 0x7) >> 1);
         pixelsaddr -= ((xoff & wmask) << 2);
         pixelsaddr -= ((xoff & 0x7) >> 1);
-        pixelstride = -1;
       } else {
         pixelsaddr += ((xoff & wmask) << 2);
         pixelsaddr += ((xoff & 0x7) >> 1);
-        pixelstride = 1;
       }
 
       for (; xoff < xend;) {

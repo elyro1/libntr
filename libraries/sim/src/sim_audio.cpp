@@ -18,8 +18,7 @@
 #include "tracy/TracyC.h"
 #endif
 
-static SDL_AudioSpec s_requestedAudioSpec, s_actualAudioSpec;
-static SDL_AudioDeviceID s_audioDevice;
+static SDL_AudioSpec s_requestedAudioSpec;
 
 u32 s_SIM_sndcnt[16] = {0};
 u8 * s_SIM_sndsad[16] = {0};
@@ -41,9 +40,6 @@ static u16 s_SIM_internalNoiseVal[16] = {0};
 static int s_blipTimer = 0;
 static blip_t* s_BlipLeft;
 static blip_t* s_BlipRight;
-static s16* s_outputBuffer;
-static u32 s_outputBufferWritePos = 0;
-static u32 s_outputBufferReadPos = 0;
 
 static int s_outputLastLeftSample;
 static int s_outputLastRightSample;
@@ -452,7 +448,7 @@ void SIM_Audio_NextSamplePCM8(int chNo)
         return;
     }
     
-    if(s_SIM_internalSoundPos[chNo] >= s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo]) {
+    if((u32)s_SIM_internalSoundPos[chNo] >= s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo]) {
         u32 repeat = (s_SIM_sndcnt[chNo] >> 27) & 0x3;
         if(repeat & 1) {
             s_SIM_internalSoundPos[chNo] = s_SIM_sndpnt[chNo];
@@ -476,7 +472,7 @@ void SIM_Audio_NextSamplePCM16(int chNo)
         return;
     }
 
-    if((s_SIM_internalSoundPos[chNo]<<1) >= s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo]) {
+    if((u32)(s_SIM_internalSoundPos[chNo]<<1) >= s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo]) {
         u32 repeat = (s_SIM_sndcnt[chNo] >> 27) & 0x3;
         if(repeat & 1) {
             s_SIM_internalSoundPos[chNo] = s_SIM_sndpnt[chNo]>>1;
@@ -514,16 +510,14 @@ void SIM_Audio_NextSampleADPCM(int chNo)
         return;
     }
 
-    if((s_SIM_internalSoundPos[chNo] >> 1) >= (s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo])) {
+    if((u32)(s_SIM_internalSoundPos[chNo] >> 1) >= (s_SIM_sndpnt[chNo] + s_SIM_sndlen[chNo])) {
         u32 repeat = (s_SIM_sndcnt[chNo]>>27) & 0x3;
         if(repeat & 1) {
             s_SIM_internalSoundPos[chNo] = s_SIM_sndpnt[chNo]<<1;
             s_SIM_internalNextADPCMByte[chNo] = s_SIM_sndpnt[chNo];
             s_SIM_internalADPCMVal[chNo] = s_SIM_internalADPCMValLoop[chNo];
             s_SIM_internalADPCMIndex[chNo] = s_SIM_internalADPCMIndexLoop[chNo];
-            u8 * ptr = (u8*)s_SIM_sndsad[chNo];
             s_SIM_internalADPCMCurByte[chNo] = GetNextADPCMByte(chNo);
-            //s_SIM_internalADPCMCurByte[chNo] = ptr[s_SIM_internalSoundPos[chNo]>>1];
         } else if (repeat & 2) {
             s_SIM_internalSoundSample[chNo] = 0;
             s_SIM_sndcnt[chNo] &= ~(1<<31);

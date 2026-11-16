@@ -95,25 +95,6 @@ u32 s_texPlttBase;
 
 extern u8 s_SIM_useWBuffer;
 
-static void CommonDebugCommandHandling(draw_command_type_t aCommand);
-
-static float GetVtxPosition(G3SIM_Vertex_t * vtx, int comp)
-{
-    switch(comp){
-        case 0:
-            return vtx->x;
-        case 1:
-            return vtx->y;
-        case 2:
-            return vtx->z;
-        case 3:
-            return vtx->w;
-        default:
-            return 0.0f;
-    }
-}
-
-
 void ClipSegment(fx32* outbuf, fx32 * vin, fx32 * vout, int comp, s32 plane, BOOL attribs)
 {
     s64 factor_num = (s32)vin[3] - (plane * (s32)vin[comp]);
@@ -215,38 +196,6 @@ static G3SIM_Matrix_t * getCurrentMatrix()
     }
 }
 
-//Return a pointer to the top matrix from the current matrix stack
-static G3SIM_Matrix_t * getTopMatrixFromCurrentStack()
-{
-    switch( s_curMtxMode )
-    {
-        case GX_MTXMODE_PROJECTION:
-            return &s_projectionStack.mtxs[0];
-            break;
-        case GX_MTXMODE_POSITION:
-            return &s_positionStack.mtxs[s_positionStack.stackPtr];
-            break;
-        case GX_MTXMODE_POSITION_VECTOR:
-            return &s_vectorStack.mtxs[s_vectorStack.stackPtr];
-            break;
-        case GX_MTXMODE_TEXTURE:
-            return &s_textureStack.mtxs[0];
-            break;
-        default:
-            return NULL;
-    }
-}
-
-static G3SIM_Matrix_t * getPositionMatrix()
-{
-    return &s_positionStack.mtxs[s_positionStack.stackPtr];
-}
-
-static G3SIM_Matrix_t * getVectorMatrix()
-{
-    return &s_vectorStack.mtxs[s_vectorStack.stackPtr];
-}
-
 //Get a pointer to the current matrix stack structure
 static G3SIM_MatrixStack_t * getCurrentMatrixStack()
 {
@@ -340,7 +289,6 @@ static void calculateClipMatrix()
 
 static void calculateVtxFx(fx32 * x, fx32 * y, fx32 * z, fx32 * w)
 {
-    fx32 myW = FX32_ONE;
     fx32 oldVec[4];
     fx32 newVec[4];
     fx32 curSum;
@@ -390,40 +338,11 @@ static void calculateRenderVtxFx(fx32 *x, fx32 *y, fx32 *z, fx32 *w)
     *w = input[3];
 }
 
-static void calculateVtx(float * x, float * y, float * z, float * w)
-{
-    float myW = 1.0f;
-
-    float oldVec[4];
-    float newVec[4];
-    float curSum;
-
-    oldVec[0] = *x;
-    oldVec[1] = *y;
-    oldVec[2] = *z;
-    oldVec[3] = 1.0f;
-
-    for( int i=0; i < 4; i++ )
-    {
-        curSum = 0.0f;
-        for(int j=0; j < 4; j++ )
-        {
-            curSum = curSum + (oldVec[j] * FX_FX32_TO_F32(currentClipMatrix.nums[j][i]));
-        }
-        newVec[i] = curSum;
-    }
-    *x = newVec[0];
-    *y = newVec[1];
-    *z = newVec[2];
-    *w = newVec[3];
-    return;
-}
-
 //Begin vertices
 void G3SIM_Begin(GXBegin type)
 {
     char debugMessage[50] = {0};
-    char * typeString = "";
+    const char * typeString = "";
     switch(type) {
         case GX_BEGIN_TRIANGLES:
             typeString = "SepTri";
@@ -549,9 +468,9 @@ void G3SIM_DecodeTex4(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t){
     u8 r;
     u8 g;
     u8 b;
-    for(int i=0; i < s; i++)
+    for(u32 i=0; i < s; i++)
     {
-        for(int j=0; j < t / 4; j++)
+        for(u32 j=0; j < t / 4; j++)
         {
             color1 = (*vramTex) & 0b00000011;
 			color2 = ((*vramTex) & 0b00001100) >> 2;
@@ -635,9 +554,9 @@ void G3SIM_DecodeTex16(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t){
         //This probably should not happen
         return;
     }
-	for( int i=0; i < s; i++ )
+	for( u32 i=0; i < s; i++ )
 	{
-		for( int j=0; j < t / 2; j++ )
+		for( u32 j=0; j < t / 2; j++ )
 		{
 			u8 color1 = (*vramTex) & 0b00001111;
 			u8 color2 = ((*vramTex) & 0b11110000) >> 4;
@@ -688,9 +607,9 @@ void G3SIM_DecodeTex16(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t){
 void G3SIM_DecodeTex256(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t){
     //4 bit per pixel (16 colour)
 	u32 texOffset = 0;
-	for( int i=0; i < s; i++ )
+	for( u32 i=0; i < s; i++ )
 	{
-		for( int j=0; j < t; j++ )
+		for( u32 j=0; j < t; j++ )
 		{
 			u8 color = (*vramTex);
 			u16 palColor;
@@ -733,9 +652,9 @@ void G3SIM_DecodeTexA3I5(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t)
     u8 b;
 
     u16 color;
-    for(int i=0; i < s; i++)
+    for(u32 i=0; i < s; i++)
     {
-        for(int j=0; j < t; j++)
+        for(u32 j=0; j < t; j++)
         {
             colorIdx = (*vramTex) & 0b00011111;
             alpha = ((*vramTex) & 0b11100000) >> 5;
@@ -773,9 +692,9 @@ void G3SIM_DecodeTexA5I3(u8* vramTex, u16* colorAddr, u8* out, u32 s, u32 t)
     u8 b;
 
     u16 color;
-    for(int i=0; i < s; i++)
+    for(u32 i=0; i < s; i++)
     {
-        for(int j=0; j < t; j++)
+        for(u32 j=0; j < t; j++)
         {
             colorIdx = (*vramTex) & 0b00000111;
             alpha = ((*vramTex) & 0b11111000) >> 3;
@@ -807,9 +726,9 @@ void G3SIM_DecodeTexDirect(u8* vramTex, u8* out, u32 s, u32 t)
     u8 g;
     u8 b;
     u32 texOffset = 0;
-    for(int i=0; i < s; i++)
+    for(u32 i=0; i < s; i++)
     {
-        for(int j = 0; j < t; j++ )
+        for(u32 j = 0; j < t; j++ )
         {
             u16 color = *colorAddr;
             SIM_u16ToRGB( color, &r, &g, &b );
@@ -950,8 +869,6 @@ void G3SIM_LightVector(u32 data)
 void G3SIM_MtxLoad43(MtxFx43 * mtx)
 {
     G3SIM_Matrix_t * curMtx = getCurrentMatrix();
-    fx32 num;
-    int curNum = 0;
     for(int i=0; i < 4; i++)
     {
         for(int j=0; j<3; j++)
@@ -994,8 +911,6 @@ void G3SIM_MtxLoad43(MtxFx43 * mtx)
 void G3SIM_MtxLoad44(MtxFx44 * mtx)
 {
     G3SIM_Matrix_t * curMtx = getCurrentMatrix();
-    fx32 num;
-    int curNum = 0;
     for(int i=0; i < 4; i++)
     {
         for(int j=0; j<4; j++)

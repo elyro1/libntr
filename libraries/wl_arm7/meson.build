@@ -3,6 +3,7 @@ subdir('src')
 libwl_arm7_includes = include_directories('include')
 
 libwl_arm7 = library('wl_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, wl_includes, libwl_arm7_includes],
     pic: false,

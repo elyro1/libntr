@@ -2,6 +2,7 @@ subdir('src')
 
 if (build_target == 'arm')
 libstubscw = library('stubscw',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -9,6 +10,7 @@ libstubscw = library('stubscw',
 )
 else
 libstubscw = library('stubscw',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: build_target == 'nx',

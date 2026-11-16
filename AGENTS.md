@@ -63,6 +63,9 @@ cd ../..  && ./drun.sh make linux     # or `make linux` with deps installed; out
 ```
 
 - meson uses this directory as-is (it doesn't re-fetch while it exists), so uncommitted edits here are what gets built.
+- `libraries/sim` builds with `-Wall`; keep it warning-free (the game's `make mingw` builds C++ with `-Werror`). The
+  vendored code builds as `sim_vendor` and the SDK modules with `nitrosdk_quiet_args` (`-w`, which no later `-W` flag
+  can undo). New SDK targets take `c_args: nitrosdk_quiet_args`; new vendored files go in `libsim_vendor_srcs`.
 - Unit tests compile real libntr sources against the game build's `compile_commands.json`:
   - `python3 libraries/sim/tests/test_field_sprites.py ../../build_linux` (OBJ rasterization, native and wide)
   - in the game repo: `tools/scripts/test_libntr_{upstream_fixes,native_sdk,lifecycle}.py --build build_linux`

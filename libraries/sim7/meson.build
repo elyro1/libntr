@@ -33,6 +33,7 @@ if(get_option('tracy_enable') == true)
 endif
 
 libsim7 = library('sim7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libsim7_includes],
     pic: build_target == 'nx',

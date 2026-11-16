@@ -4,6 +4,7 @@ libspi_includes = include_directories('include')
 
 if (build_target == 'arm')
 libspi = library('spi',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libspi_includes],
     pic: false,
@@ -11,6 +12,7 @@ libspi = library('spi',
 )
 
 libspi_arm7 = library('spi_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libspi_includes],
     pic: false,
@@ -19,6 +21,7 @@ libspi_arm7 = library('spi_arm7',
 )
 else
 libspi = library('spi',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libspi_includes],
     pic: build_target == 'nx',

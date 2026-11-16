@@ -35,7 +35,7 @@ static const char * NetStateToString(SIM_Net_State_t state)
 
 void AppNetInit() {
     sConfig = SIM_GetConfigPtr();
-    strncpy(sHostBuf, sConfig->netSettings.serverIp, 15);
+    SDL_strlcpy(sHostBuf, sConfig->netSettings.serverIp, sizeof(sHostBuf));
 }
 
 void AppNetContents() {

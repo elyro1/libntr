@@ -3,6 +3,7 @@ subdir('src')
 libcamera_includes = include_directories('include')
 
 libcamera = library('camera',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libcamera_includes],
     pic: build_target == 'nx',

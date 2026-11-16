@@ -466,7 +466,6 @@ void HandleCommandMessage(draw_msg_t *msg) {
     G3SIM_Vtx(msg->data.xyz.x, msg->data.xyz.y, msg->data.xyz.z);
     if (s_G3numInPoly == 0 || s_G3drawPoly == 1) {
       s_G3drawPoly = 0;
-      GLfloat myVerts[(3 * 6) + (2 * 6)];
       if (s_primType == GX_BEGIN_TRIANGLES ||
           s_primType == GX_BEGIN_TRIANGLE_STRIP) {
         if (s_primType == GX_BEGIN_TRIANGLE_STRIP &&
@@ -595,7 +594,7 @@ void HandleCommandMessage(draw_msg_t *msg) {
       u8 paramSize;
       u8 paramSigned;
       while (curOffset < msg->size) {
-        paramPtr = (void *)cmdBlockPtr + 4;
+        paramPtr = (u8 *)cmdBlockPtr + 4;
         curOffset += 4;
         for (int i = 0; i < 4; i++) {
           tempMsg.type = DecodeG3Op(cmdBlockPtr->ops[i]);
@@ -637,7 +636,7 @@ void HandleCommandMessage(draw_msg_t *msg) {
             default:
               break;
             }
-            paramPtr += paramSize;
+            paramPtr = (u8 *)paramPtr + paramSize;
             curOffset += paramSize;
           }
 

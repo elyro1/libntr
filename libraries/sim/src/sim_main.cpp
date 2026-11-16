@@ -169,7 +169,11 @@ static float PresentedWidth() {
 
 #ifdef SDK_BUILD_WIN64
 #define NANOTIME_IMPLEMENTATION
+// Vendored; its Windows path compares LONGLONG with an unsigned constant.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-compare"
 #include "nanotime.h"
+#pragma GCC diagnostic pop
 #endif
 
 #include <nitro/wm/ARM7/wm_sp.h>
@@ -379,7 +383,6 @@ u8 s_SIM_g3tex[4 * 1024 * 1024];
 
 // FBOs
 static GLuint g3FrameBuffer;
-static GLuint fboId;
 static GLuint g2FrameBuffer;
 static GLuint s_SideAverageFramebuffer;
 static GLuint s_SideAverageTexture;
@@ -532,8 +535,6 @@ static SDL_GLContext context;
 static SDL_Window *window;
 
 u8 s_SIM_dbg_dumpSound = 0;
-static u8 s_SIM_dbg_soundFileOpen = 0;
-static FILE *s_SIM_dbg_soundFile = NULL;
 u8 s_SIM_dbg_soundSoloChannel = 0xFF;
 void *win_snd_channel_bufs[32] = {0};
 WIN_snd_channel_info win_snd_channels[32];
@@ -574,12 +575,7 @@ u8 s_mosaicTable[16][256];
 static u8 isMouseDown = 0;
 
 // Local Procedure Declarations
-static void ConvertMsgParams(draw_msg_t *msg);
-static u8 GetNumParamsFromCommandType(draw_command_type_t type);
-static u8 GetParamSizeFromCommandType(draw_command_type_t type);
-static u8 isParamSigned(draw_command_type_t type);
 static u64 map(u64 x, u64 in_min, u64 in_max, u64 out_min, u64 out_max);
-static void process_nibble(unsigned char data4bit, int *Index, int *Pcm16bit);
 static void DrawScreenQuad();
 static void DrawEngine(BOOL isSub);
 
@@ -805,7 +801,6 @@ void *SIM_RenderInit(void *arg) {
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(MessageCallback, 0);
 
-  GLenum glErrCode;
   GLint status;
   GLint logSize = 0;
 
@@ -925,13 +920,13 @@ void *SIM_RenderInit(void *arg) {
   glAttachShader(_id, _vertex);                                                \
   glAttachShader(_id, _fragment);                                              \
   glLinkProgram(_id);                                                          \
-  glErrCode = glGetError();                                                    \
+  glGetError();                                                                \
   glGetProgramiv(_id, GL_LINK_STATUS, &status);                                \
   if (status != GL_TRUE) {                                                     \
     glGetProgramiv(_id, GL_INFO_LOG_LENGTH, &logSize);                         \
     errorBuf = (GLchar *)malloc(logSize * sizeof(GLchar));                     \
     glGetProgramInfoLog(_id, logSize, &logSize, (GLchar *)errorBuf);           \
-    glErrCode = glGetError();                                                  \
+    glGetError();                                                              \
     printf("ERROR LINKING _id SHADER:\n%s\n", errorBuf);                       \
     free(errorBuf);                                                            \
   }                                                                            \
@@ -1159,9 +1154,8 @@ static void CaptureHeldScreen() {
 }
 
 static void DrawEngine(BOOL isSub) {
-  const char *zoneName;
-  zoneName = isSub ? "DrawEngine (SUB)" : "DrawEngine (MAIN)";
 #ifdef SDK_TRACY_ENABLE
+  const char *zoneName = isSub ? "DrawEngine (SUB)" : "DrawEngine (MAIN)";
   TracyCZone(ctx, 1);
   TracyCZoneName(ctx, zoneName, strlen(zoneName));
 #endif
@@ -1310,7 +1304,6 @@ static void DrawEngine(BOOL isSub) {
       u8 r;
       u8 g;
       u8 b;
-      u8 a;
       for (int j = 0; j < 256; j++) {
         if (OBJLine[isSub][j]) {
           u8 colorIdx = OBJLine[isSub][j] & 0xFF;
@@ -1458,7 +1451,6 @@ static void DrawEngine(BOOL isSub) {
   }
   glProgramUniform1i(g2shaderProgramID, glGetUniformLocation(g2shaderProgramID, "smoothBgLayer"), smoothBgLayer);
 
-  int drawnOAMs = 0;
   int wideBgMask = 0;
 
   // Draw the BGs
@@ -1922,14 +1914,8 @@ extern "C" void SIM_Autopilot_BeforeSwap(int width, int height);
 void *SIM_Render(void *arg) {
 
   SDL_Event Event;
-  char c;
   int x;
   int y;
-  u8 r;
-  u8 g;
-  u8 b;
-  u16 keys;
-  u32 i;
 
   G3SIM_FlushArray();
 
@@ -2294,8 +2280,8 @@ void *SIM_Render(void *arg) {
     SDL_GetMouseState(&x, &y);
 
     // Convert touch coordinate to DS screen coordinates
-    if (s_SIM_config.screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY && x >= s_TouchPanelCoords[0] && x <= s_TouchPanelCoords[2] &&
-        y >= s_TouchPanelCoords[1] && y <= s_TouchPanelCoords[3]) {
+    if (s_SIM_config.screenLayout != SIM_CONFIG_SCREEN_LAYOUT_TOP_ONLY && (u32)x >= s_TouchPanelCoords[0] && (u32)x <= s_TouchPanelCoords[2] &&
+        (u32)y >= s_TouchPanelCoords[1] && (u32)y <= s_TouchPanelCoords[3]) {
       s_tpData.x = (u16)map(x, s_TouchPanelCoords[0], s_TouchPanelCoords[2], 0,
                             SIM_NDS_SCREEN_WIDTH);
       s_tpData.y = (u16)map(y, s_TouchPanelCoords[1], s_TouchPanelCoords[3], 0,
@@ -2586,22 +2572,17 @@ int main(int argc, char *argv[]) {
 
 #ifdef LIBNTR_CARD_GAME_CODE
   const char *gameCode = LIBNTR_CARD_GAME_CODE;
-  strncpy((char *)&cardHeader->game_code, gameCode, sizeof(u32));
+  memcpy(&cardHeader->game_code, gameCode, sizeof(u32));
 #endif
 #ifdef LIBNTR_CARD_MAKER_CODE
   const char *makerCode = LIBNTR_CARD_MAKER_CODE;
-  strncpy((char *)&cardHeader->maker_code, makerCode, sizeof(u16));
+  memcpy(&cardHeader->maker_code, makerCode, sizeof(u16));
 #endif
 
   memset((void *)HW_MAIN_MEM_SHARED, 0, 0x160);
 
   SIM_pxiInit();
 
-  pthread_t thread;
-  SDL_Thread *pxiThread;
-  SDL_Thread *pxi7to9Thread;
-  int num;
-  num = 123;
 
   // Initialize mosaic table
   u32 i;
@@ -2640,8 +2621,8 @@ int main(int argc, char *argv[]) {
   // Set up OS NVRAM Config
   SIM_Config_SetOSNVRAMConfig(&s_SIM_config);
 
-  pxiThread = SDL_CreateThread(SIM_procPxiThread, "PXI", NULL);
-  pxi7to9Thread = SDL_CreateThread(SIM_procPxi7to9Thread, "PXI7to9", NULL);
+  SDL_CreateThread(SIM_procPxiThread, "PXI", NULL);
+  SDL_CreateThread(SIM_procPxi7to9Thread, "PXI7to9", NULL);
 
   WM_sp_SIM_init();
 

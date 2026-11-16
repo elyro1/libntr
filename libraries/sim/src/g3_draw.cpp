@@ -535,27 +535,6 @@ extern GXVRamTex s_SIM_GXVRamTex;
 extern GXVRamTexPltt s_SIM_GXVRamTexPltt;
 
 
-// The CPU cache supplies decoded pixels. Allocate upload targets only for
-// dimensions actually used, instead of preallocating the old fixed-size pool.
-// Deferred draws still own independent copies of their decoded textures.
-static GLuint SIM_GetTextureID() {
-    static std::unordered_map<u32, GLuint> targets;
-    const u32 width = s_texImageParam.textureSSize;
-    const u32 height = s_texImageParam.textureTSize;
-    const u32 key = (width << 16) | height;
-    GLuint &id = targets[key];
-    glActiveTexture(GL_TEXTURE0);
-    if (!id) {
-        glGenTextures(1, &id);
-        glBindTexture(GL_TEXTURE_2D, id);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    }
-    glBindTexture(GL_TEXTURE_2D, id);
-    return id;
-}
-
 static void* getTextureVramBank();
 static void* getTexPlttVramBank();
 
@@ -1046,7 +1025,7 @@ void G3SIM_DrawItems()
 	G3SIM_ApplyDepthViewport();
 
 	//Draws all the translucent objects that were deferred to the end of the frame.
-	for(int i=0; i<s_G3DrawItemListCount; i++) {
+	for(u32 i=0; i<s_G3DrawItemListCount; i++) {
 		g3_draw_item_t * item = &s_G3DrawItemList[i];
         SIM_ApplyPolygonStencil(item->fieldEffectMode, item->polygonAttr.polygonId);
 		if(item->textureId != 0){

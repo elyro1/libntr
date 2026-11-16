@@ -1,17 +1,6 @@
 libsim_srcs = files(
-    'blip-buf/blip_buf.c',
     'config/config_check.c',
-    'config/ini.c',
     'config/sim_config.c',
-    'fireflower/nds-extract.cpp',
-    'imgui/imgui.cpp',
-    'imgui/imgui_demo.cpp',
-    'imgui/imgui_draw.cpp',
-    'imgui/imgui_impl_opengl3.cpp',
-    'imgui/imgui_impl_sdl2.cpp',
-    'imgui/imgui_tables.cpp',
-    'imgui/imgui_widgets.cpp',
-    'ImGuiFileDialog/ImGuiFileDialog.cpp',
     'g3_draw.cpp',
     'g3_handler.cpp',
     'queue.c',
@@ -35,6 +24,21 @@ libsim_srcs = files(
 )
 libsim_vars_srcs = files('sim_vars.c')
 
+# Vendored code, built without warnings.
+libsim_vendor_srcs = files(
+    'blip-buf/blip_buf.c',
+    'config/ini.c',
+    'fireflower/nds-extract.cpp',
+    'imgui/imgui.cpp',
+    'imgui/imgui_demo.cpp',
+    'imgui/imgui_draw.cpp',
+    'imgui/imgui_impl_opengl3.cpp',
+    'imgui/imgui_impl_sdl2.cpp',
+    'imgui/imgui_tables.cpp',
+    'imgui/imgui_widgets.cpp',
+    'ImGuiFileDialog/ImGuiFileDialog.cpp',
+)
+
 if(build_target == 'linux' or build_target == 'win64')
-libsim_srcs += files('glad.c')
+libsim_vendor_srcs += files('glad.c')
 endif

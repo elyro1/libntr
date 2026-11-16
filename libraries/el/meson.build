@@ -3,6 +3,7 @@ subdir('src')
 libel_includes = include_directories('include')
 
 libel = library('el',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libel_includes],
     pic: build_target == 'nx',

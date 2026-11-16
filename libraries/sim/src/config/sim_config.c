@@ -6,7 +6,6 @@
 #include <simulator/config/sim_config.h>
 
 #include <string.h>
-#include <wchar.h>
 
 #include <SDL2/SDL.h>
 
@@ -17,6 +16,30 @@
 #include <limits.h>
 
 #define SIM_CONFIG_FILE_PATH "./sim_config.ini"
+
+// NVRAM strings are UTF-16 without a terminator, sized by their length field; the ini holds them as ASCII.
+static u8 SetNvramString(u16 *dst, int capacity, const char *src)
+{
+    int len = 0;
+    memset(dst, 0, capacity * sizeof(u16));
+    while (src[len] != '\0' && len < capacity) {
+        dst[len] = (u8)src[len];
+        len++;
+    }
+    return (u8)len;
+}
+
+static const char *GetNvramString(char *dst, const u16 *src, int len, int capacity)
+{
+    if (len > capacity) {
+        len = capacity;
+    }
+    for (int i = 0; i < len; i++) {
+        dst[i] = src[i] < 0x80 ? (char)src[i] : '?';
+    }
+    dst[len] = '\0';
+    return dst;
+}
 
 static int IniHandler(void* user, const char* section, const char* name,
                    const char* value, int line);
@@ -244,19 +267,12 @@ static int IniHandler(void* user, const char* section, const char* name,
         SET_INT(config->osNvramConfig.ncd.owner.birthday.day);
     }
     if(MATCH("OSNVRAM", "Owner_Nickname")) {
-        memset(config->osNvramConfig.ncd.owner.nickname.str, 0, NVRAM_CONFIG_NICKNAME_LENGTH*2);
-
-        int valueLen = strlen(value);
-        for(int i=0; i < valueLen; i++) {
-            u16 outChar = value[i];
-            config->osNvramConfig.ncd.owner.nickname.str[i] = outChar;
-        }
-        config->osNvramConfig.ncd.owner.nickname.length = (u8)wcslen((wchar_t*)config->osNvramConfig.ncd.owner.nickname.str);
+        config->osNvramConfig.ncd.owner.nickname.length =
+            SetNvramString(config->osNvramConfig.ncd.owner.nickname.str, NVRAM_CONFIG_NICKNAME_LENGTH, value);
     }
     if(MATCH("OSNVRAM", "Owner_Comment")) {
-        memset(config->osNvramConfig.ncd.owner.comment.str, 0, NVRAM_CONFIG_COMMENT_LENGTH*2);
-        swprintf((wchar_t*)config->osNvramConfig.ncd.owner.comment.str, (NVRAM_CONFIG_COMMENT_LENGTH)-1, L"%s", value);
-        config->osNvramConfig.ncd.owner.comment.length = wcslen((wchar_t*)config->osNvramConfig.ncd.owner.comment.str);
+        config->osNvramConfig.ncd.owner.comment.length =
+            SetNvramString(config->osNvramConfig.ncd.owner.comment.str, NVRAM_CONFIG_COMMENT_LENGTH, value);
     }
     //Alarm
     if(MATCH("OSNVRAM", "Alarm_Hour")) {
@@ -533,7 +549,8 @@ void SIM_Config_LoadDefaults(SIM_config_type * aConfig)
     aConfig->macAddr[5] = rand();
 
     memset(&aConfig->osNvramConfig, 0, sizeof(NVRAMConfig));
-    wcscpy((wchar_t*)aConfig->osNvramConfig.ncd.owner.nickname.str, L"Player");
+    aConfig->osNvramConfig.ncd.owner.nickname.length =
+        SetNvramString(aConfig->osNvramConfig.ncd.owner.nickname.str, NVRAM_CONFIG_NICKNAME_LENGTH, "Player");
     aConfig->osNvramConfig.ncd.option.input_nickname = TRUE;
     aConfig->osNvramConfig.ncd.option.input_favoriteColor = TRUE;
     aConfig->osNvramConfig.ncd.option.input_language = TRUE;
@@ -552,10 +569,10 @@ static void WriteConfig(SIM_ConfigText *configFile, const SIM_config_type *aConf
     SIM_ConfigText_Printf(configFile, "PauseWhileOpen=%s\n\n", BoolToString(aConfig->pauseWhileMenuOpen));
     
     SIM_ConfigText_Printf(configFile, "[General]\n");
-    SIM_ConfigText_Printf(configFile, "InternalResolutionScale=%d\n", aConfig->internalResolutionScale);
+    SIM_ConfigText_Printf(configFile, "InternalResolutionScale=%d\n", (int)aConfig->internalResolutionScale);
     SIM_ConfigText_Printf(configFile, "MasterVolume=%d\n", aConfig->masterVolume);
-    SIM_ConfigText_Printf(configFile, "WindowHeight=%d\n", aConfig->windowHeight);
-    SIM_ConfigText_Printf(configFile, "WindowWidth=%d\n", aConfig->windowWidth);
+    SIM_ConfigText_Printf(configFile, "WindowHeight=%d\n", (int)aConfig->windowHeight);
+    SIM_ConfigText_Printf(configFile, "WindowWidth=%d\n", (int)aConfig->windowWidth);
     SIM_ConfigText_Printf(configFile, "FullScreen=%s\n", BoolToString(aConfig->fullScreen));
 
     const char * screenLayoutString = ScreenLayoutTypeToString(aConfig->screenLayout);
@@ -612,8 +629,11 @@ static void WriteConfig(SIM_ConfigText *configFile, const SIM_config_type *aConf
     SIM_ConfigText_Printf(configFile, "Owner_FavoriteColor=%d\n", aConfig->osNvramConfig.ncd.owner.favoriteColor);
     SIM_ConfigText_Printf(configFile, "Owner_BirthdayMonth=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.month);
     SIM_ConfigText_Printf(configFile, "Owner_BirthdayDay=%d\n", aConfig->osNvramConfig.ncd.owner.birthday.day);
-    SIM_ConfigText_Printf(configFile, "Owner_Nickname=%ls\n", aConfig->osNvramConfig.ncd.owner.nickname.str);
-    SIM_ConfigText_Printf(configFile, "Owner_Comment=%ls\n", aConfig->osNvramConfig.ncd.owner.comment.str);
+    char nvramText[NVRAM_CONFIG_COMMENT_LENGTH + 1];
+    SIM_ConfigText_Printf(configFile, "Owner_Nickname=%s\n", GetNvramString(nvramText,
+        aConfig->osNvramConfig.ncd.owner.nickname.str, aConfig->osNvramConfig.ncd.owner.nickname.length, NVRAM_CONFIG_NICKNAME_LENGTH));
+    SIM_ConfigText_Printf(configFile, "Owner_Comment=%s\n", GetNvramString(nvramText,
+        aConfig->osNvramConfig.ncd.owner.comment.str, aConfig->osNvramConfig.ncd.owner.comment.length, NVRAM_CONFIG_COMMENT_LENGTH));
     SIM_ConfigText_Printf(configFile, "Alarm_Hour=%d\n", aConfig->osNvramConfig.ncd.alarm.hour);
     SIM_ConfigText_Printf(configFile, "Alarm_Minute=%d\n", aConfig->osNvramConfig.ncd.alarm.minute);
     SIM_ConfigText_Printf(configFile, "Alarm_Second=%d\n", aConfig->osNvramConfig.ncd.alarm.second);

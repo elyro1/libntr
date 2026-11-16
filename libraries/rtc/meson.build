@@ -8,6 +8,7 @@ endif
 
 if (build_target == 'arm')
 librtc = library('rtc',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [librtc_includes, nitrosdk_includes],
     pic: false,
@@ -15,6 +16,7 @@ librtc = library('rtc',
 )
 
 librtc_arm7 = library('rtc_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -23,6 +25,7 @@ librtc_arm7 = library('rtc_arm7',
 )
 else
 librtc = library('rtc',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [librtc_includes, nitrosdk_includes],
     pic: build_target == 'nx',

@@ -4,6 +4,7 @@ libctrdg_includes = include_directories('include')
 
 if (build_target == 'arm')
 libctrdg = library('ctrdg',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libctrdg_includes],
     pic: false,
@@ -11,6 +12,7 @@ libctrdg = library('ctrdg',
 )
 
 libctrdg_arm7 = library('ctrdg_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libctrdg_includes],
     pic: false,
@@ -19,6 +21,7 @@ libctrdg_arm7 = library('ctrdg_arm7',
 )
 else
 libctrdg = library('ctrdg',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libctrdg_includes],
     pic: build_target == 'nx',

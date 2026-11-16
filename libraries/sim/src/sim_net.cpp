@@ -380,8 +380,6 @@ BOOL SIM_Net_SendMPData(u16 aidBitmap, u8 port, u8 * data, int dataLen)
     }
     printf("\n");
 
-    int numSent = 0;
-
     for(int i=0; i < SIM_NET_MAX_PLAYERS; i++) {
         if(!(net.playerList[i].status == SIM_NET_PLAYERSTATUS_CLIENT || net.playerList[i].status == SIM_NET_PLAYERSTATUS_HOST)) {
             continue;
@@ -403,11 +401,9 @@ BOOL SIM_Net_SendMPData(u16 aidBitmap, u8 port, u8 * data, int dataLen)
         }
 
         enet_peer_send(net.peerList[i], SIM_NET_CHANNEL_APPDATA, pkt);
-        numSent++;
     }
 
     free(mpDataPacket);
-    //return (numSent > 0);
     return TRUE;
 }
 
@@ -867,7 +863,7 @@ static void ProcessMPChildEvent(ENetEvent * event)
                 printf("NET: Child received disconnect. Setting MP state to OFF.\n");
 
                 net.curPlayer.aid = 0;
-                net.curPlayer.mpState == SIM_NET_MPSTATE_OFF;
+                net.curPlayer.mpState = SIM_NET_MPSTATE_OFF;
                 SendMyPlayer();
 
                 SIM_WMSP_Indicate_t indicate = {};

@@ -4,6 +4,7 @@ libwm_includes = include_directories('include')
 
 if (build_target == 'arm')
 libwm = library('wm',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libwm_includes],
     pic: false,
@@ -11,6 +12,7 @@ libwm = library('wm',
 )
 else
 libwm = library('wm',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libwm_includes],
     pic: build_target == 'nx',

@@ -1,5 +1,6 @@
 
 libsubpsyscall_arm7 = static_library('subpsyscall_arm7',
+    c_args: nitrosdk_quiet_args,
     sources: 'src/subpsyscall.s',
     nasm_args: ['-proc', 'arm4t', '-16', '-gccinc'],
     pic: false,

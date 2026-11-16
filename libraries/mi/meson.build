@@ -4,6 +4,7 @@ libmi_includes = include_directories('include')
 
 if (build_target == 'arm')
 libmi = library('mi',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libmi_includes],
     pic: false,
@@ -11,6 +12,7 @@ libmi = library('mi',
 )
 
 libmi_arm7 = library('mi_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libmi_includes],
     pic: false,
@@ -19,6 +21,7 @@ libmi_arm7 = library('mi_arm7',
 )
 else
 libmi = library('mi',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libmi_includes],
     pic: build_target == 'nx',

@@ -4,6 +4,7 @@ libfs_includes = include_directories('include')
 
 if (build_target == 'arm')
 libfs = library('fs',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libfs_includes],
     pic: false,
@@ -11,6 +12,7 @@ libfs = library('fs',
 )
 
 libfs_arm7 = library('fs_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libfs_includes],
     pic: false,
@@ -19,6 +21,7 @@ libfs_arm7 = library('fs_arm7',
 )
 else
 libfs = library('fs',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libfs_includes],
     pic: build_target == 'nx',

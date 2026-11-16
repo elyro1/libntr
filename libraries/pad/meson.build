@@ -1,6 +1,7 @@
 subdir('src')
 
 libpad_arm7 = library('pad_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,

@@ -171,12 +171,24 @@ nitrosdk_arm7_args_dep = declare_dependency(
   compile_args: nitrosdk_arm7_args
 )
 
-add_project_arguments(nitrosdk_args,
+# No later -W flag can undo -w, so it goes on each SDK target (nitrosdk_quiet_args) instead of the whole project, and
+# the simulator's own code builds with warnings. Consumers still get it through nitrosdk_dep.
+nitrosdk_project_args = []
+nitrosdk_quiet_args = []
+foreach arg : nitrosdk_args
+    if arg == '-w'
+        nitrosdk_quiet_args += arg
+    else
+        nitrosdk_project_args += arg
+    endif
+endforeach
+
+add_project_arguments(nitrosdk_project_args,
     language: 'c',
     native: (build_target == 'linux' or build_target == 'win64')
 )
 
-add_project_arguments(nitrosdk_args,
+add_project_arguments(nitrosdk_project_args,
     language: 'cpp',
     native: (build_target == 'linux' or build_target == 'win64')
 )
@@ -191,6 +203,8 @@ nitro_pch = meson.current_source_dir() / 'include/pch/nitro_pch.h'
 ###                    INCLUDE PATHS                     ###
 ############################################################
 nitrosdk_includes = include_directories('gen', 'include')
+# For the simulator, which builds with warnings: the SDK's headers stay quiet there.
+nitrosdk_system_includes = include_directories('gen', 'include', is_system: true)
 include_nitro = include_directories('include' / 'nitro')
 wl_includes = include_directories('include' / 'nitro_wl' / 'ARM7')
 

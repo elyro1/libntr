@@ -7,6 +7,7 @@ endif
 
 if (build_target == 'arm')
 libos = library('os',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [libos_includes, nitrosdk_includes],
     pic: false,
@@ -14,6 +15,7 @@ libos = library('os',
 )
 
 libos_arm7 = library('os_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -22,6 +24,7 @@ libos_arm7 = library('os_arm7',
 )
 else
 libos = library('os',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [libos_includes, nitrosdk_includes],
     pic: false,

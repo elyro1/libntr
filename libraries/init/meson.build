@@ -2,6 +2,7 @@ subdir('src')
 
 if (build_target == 'arm')
 libinit = library('init',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -9,6 +10,7 @@ libinit = library('init',
 )
 
 libinit_arm7 = library('init_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,
@@ -17,6 +19,7 @@ libinit_arm7 = library('init_arm7',
 )
 else
 libinit = library('init',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: build_target == 'nx',
@@ -25,6 +28,7 @@ libinit = library('init',
 )
 
 libinit_arm7 = library('init_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: nitrosdk_includes,
     pic: false,

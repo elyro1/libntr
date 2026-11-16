@@ -4,6 +4,7 @@ libcard_includes = include_directories('include')
 
 if (build_target == 'arm')
 libcard = library('card',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libcard_includes],
     pic: false,
@@ -11,6 +12,7 @@ libcard = library('card',
 )
 
 libcard_arm7 = library('card_arm7',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libcard_includes],
     pic: false,
@@ -19,6 +21,7 @@ libcard_arm7 = library('card_arm7',
 )
 else
 libcard = library('card',
+    c_args: nitrosdk_quiet_args,
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libcard_includes],
     pic: build_target == 'nx',
