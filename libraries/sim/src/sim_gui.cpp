@@ -30,7 +30,8 @@ static const char *const sPageNames[] = {
 };
 
 void __attribute__((weak)) ProjectPage(Page page) {
-    if (page == Page::Graphics || page == Page::SpeedText || page == Page::Tools || page == Page::Gameplay)
+    if (page == Page::SpeedText) FastForwardContents();
+    else if (page == Page::Graphics || page == Page::Tools || page == Page::Gameplay)
         ImGui::TextWrapped("This application does not provide additional settings here.");
 }
 bool __attribute__((weak)) ProjectBack(Page) { return false; }
@@ -182,10 +183,6 @@ static void DrawPage() {
     case Page::Graphics:
         GraphicsTimingContents();
         ProjectPage(sPage);
-        break;
-    case Page::SpeedText:
-        ProjectPage(sPage);
-        FastForwardContents();
         break;
     case Page::Controls: AppPadContents(); break;
     case Page::Multiplayer: AppNetContents(); break;

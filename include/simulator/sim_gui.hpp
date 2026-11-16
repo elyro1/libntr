@@ -32,6 +32,8 @@ bool ProjectBack(Page page);
 // Responsive, font-sized settings rows. Call between BeginSettings/EndTable.
 bool BeginSettings(const char *id);
 void SettingsRow(const char *label, const char *description = nullptr);
+// The fast-forward speed row for a project's Speed & text page; saves on change.
+void FastForwardRow();
 void AppButton(const char * label, bool * state, void (*aInitFunc)(void), void (*aAppFunc)(bool *));
 
 

@@ -103,18 +103,19 @@ void GraphicsTimingContents() {
     if (changed) SIM_Config_SaveConfigFile(config);
 }
 
-void FastForwardContents() {
+void FastForwardRow() {
     auto *config = SIM_GetConfigPtr();
-    bool changed = false;
-    ImGui::SeparatorText("Fast-forward");
-    if (!BeginSettings("FastForwardSettings")) return;
     SettingsRow("Fast-forward speed");
     float speed = config->fastForwardMultiplier;
     if (ImGui::SliderFloat("##FastForward", &speed, 1, 10, "%.2fx")) {
         config->fastForwardMultiplier = SIM_Config_ValidateFastForwardMultiplier(speed);
-        changed = true;
+        SIM_Config_SaveConfigFile(config);
     }
+}
+
+void FastForwardContents() {
+    if (!BeginSettings("FastForwardSettings")) return;
+    FastForwardRow();
     ImGui::EndTable();
-    if (changed) SIM_Config_SaveConfigFile(config);
 }
 }
