@@ -9,6 +9,8 @@
 #endif
 
 #ifdef SDK_PORT
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #endif
 
@@ -181,26 +183,103 @@ RTCResult RTC_GetTimeAsync (RTCTime * time, RTCCallback callback, void * arg)
 }
 
 #ifdef SDK_PORT
-static void getPCTime( RTCTime* theTime )
+typedef struct PCClock {
+    int year, month, day, week, hour, minute, second;
+} PCClock;
+
+static BOOL fixedClockParsed;
+static BOOL fixedClockSet;
+static PCClock fixedClock;
+
+static int DaysInMonth(int year, int month)
+{
+    static const int days[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    BOOL leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    return month == 2 && leap ? 29 : days[month - 1];
+}
+
+// Sakamoto's method; 0 = Sunday like tm_wday and RTC_WEEK_SUNDAY
+static int DayOfWeek(int year, int month, int day)
+{
+    static const int offsets[12] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+    if (month < 3) {
+        year--;
+    }
+    return (year + year / 4 - year / 100 + year / 400 + offsets[month - 1] + day) % 7;
+}
+
+// PLATINUM_FIXED_CLOCK=YYYY-MM-DDTHH:MM[:SS] freezes the RTC so time of day, shadows and
+// clock-driven events repeat between test runs
+static BOOL GetFixedClock(PCClock *out)
+{
+    if (!fixedClockParsed) {
+        const char *value = getenv("PLATINUM_FIXED_CLOCK");
+        fixedClockParsed = TRUE;
+
+        if (value != NULL && value[0] != '\0') {
+            PCClock c = { 0 };
+            char separator = 0;
+            int consumed = 0;
+            int fields = sscanf(value, "%4d-%2d-%2d%c%2d:%2d%n:%2d%n", &c.year, &c.month, &c.day, &separator,
+                &c.hour, &c.minute, &consumed, &c.second, &consumed);
+
+            if (fields >= 6 && value[consumed] == '\0' && (separator == 'T' || separator == ' ')
+                && c.year >= 2000 && c.year <= 2099 && c.month >= 1 && c.month <= 12 && c.day >= 1
+                && c.day <= DaysInMonth(c.year, c.month) && c.hour >= 0 && c.hour < 24 && c.minute >= 0
+                && c.minute < 60 && c.second >= 0 && c.second < 60) {
+                c.week = DayOfWeek(c.year, c.month, c.day);
+                fixedClock = c;
+                fixedClockSet = TRUE;
+            } else {
+                fprintf(stderr, "[config] environment: PLATINUM_FIXED_CLOCK=%s is ignored: expected "
+                    "YYYY-MM-DDTHH:MM[:SS] with a year from 2000 to 2099\n", value);
+            }
+        }
+    }
+
+    if (fixedClockSet) {
+        *out = fixedClock;
+    }
+    return fixedClockSet;
+}
+
+static void getPCClock( PCClock* now )
 {
     struct tm * timeinfo;
-    time_t currentTime = time( NULL );
+    time_t currentTime;
+
+    if (GetFixedClock(now)) {
+        return;
+    }
+
+    currentTime = time( NULL );
     timeinfo = localtime( &currentTime );
-    theTime->hour = timeinfo->tm_hour;
-    theTime->minute = timeinfo->tm_min;
-    theTime->second = timeinfo->tm_sec;
+    now->year = timeinfo->tm_year + 1900;
+    now->month = timeinfo->tm_mon + 1;
+    now->day = timeinfo->tm_mday;
+    now->week = timeinfo->tm_wday;
+    now->hour = timeinfo->tm_hour;
+    now->minute = timeinfo->tm_min;
+    now->second = timeinfo->tm_sec;
+}
+
+static void getPCTime( RTCTime* theTime )
+{
+    PCClock now;
+    getPCClock( &now );
+    theTime->hour = now.hour;
+    theTime->minute = now.minute;
+    theTime->second = now.second;
 }
 
 static void getPCDate( RTCDate* theDate )
 {
-    struct tm * timeinfo;
-    time_t currentTime = time( NULL );
-    timeinfo = localtime( &currentTime );
-
-    theDate->year = timeinfo->tm_year - 100;
-    theDate->month = timeinfo->tm_mon + 1;
-    theDate->day = timeinfo->tm_mday;
-    theDate->week = timeinfo->tm_wday;
+    PCClock now;
+    getPCClock( &now );
+    theDate->year = now.year - 2000;
+    theDate->month = now.month;
+    theDate->day = now.day;
+    theDate->week = now.week;
 }
 #endif
 
