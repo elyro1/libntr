@@ -32,8 +32,8 @@ libsim_srcs = files(
     'sim_RomExtractor.cpp',
     'sim_screenquads.c',
     'sim_shaders.cpp',
-    'sim_vars.c'
 )
+libsim_vars_srcs = files('sim_vars.c')
 
 if(build_target == 'linux' or build_target == 'win64')
 libsim_srcs += files('glad.c')

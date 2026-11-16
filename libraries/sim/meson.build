@@ -96,6 +96,26 @@ libnx_dep = declare_dependency(dependencies: [libnx_lib])
 libsim_dependencies += libnx_dep
 endif
 
+# sim_vars.c holds the DS's memory and I/O registers as separate globals, and the SDK treats neighbouring ones as one
+# block, as in the DS's memory map: it reaches registers through offsets from their block's first (DMA, the 2D
+# registers) and sizes HW_PLTT from the BG palettes to the end of the OBJ ones. Keep them in source order (optimized
+# builds reorder globals) and without ASan's redzones between them.
+libsim_vars_args = []
+foreach arg : ['-fno-toplevel-reorder', '--param=asan-globals=0']
+    if meson.get_compiler('c', native: (build_target == 'linux' or build_target == 'win64')).has_argument(arg)
+        libsim_vars_args += arg
+    endif
+endforeach
+libsim_vars = static_library('sim_vars',
+    c_pch: nitro_pch,
+    include_directories: [nitrosdk_includes, libsim_includes],
+    pic: build_target == 'nx',
+    c_args: [libsim_args, libsim_vars_args],
+    sources: [libsim_vars_srcs, fx_const_h],
+    dependencies: libsim_dependencies,
+    native: (build_target == 'linux' or build_target == 'win64')
+)
+
 libsim = library('sim',
     c_pch: nitro_pch,
     include_directories: [nitrosdk_includes, libsim_includes],
@@ -103,6 +123,7 @@ libsim = library('sim',
     c_args: libsim_args,
     cpp_args: [libsim_args, '-O2', '-std=c++20'],
     sources: [libsim_srcs, fx_const_h, git_info_h],
+    objects: libsim_vars.extract_all_objects(recursive: false),
     dependencies: libsim_dependencies,
     native: (build_target == 'linux' or build_target == 'win64')
 )
